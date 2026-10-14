@@ -112,6 +112,7 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
   };
 
   let nContas = 0, nCartoes = 0, nInv = 0, nTx = 0;
+  let grpBanco: string | null = null; // perfil escolhido para a conta do banco (ex.: IPTV) — investimentos novos seguem ele
   const desde = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
   const ate = new Date(Date.now() + 400 * 864e5).toISOString().slice(0, 10); // inclui parcelas futuras
 
@@ -142,7 +143,7 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
         atualizado_em: new Date().toISOString(),
       };
       const ex = await sb.from("contas").select("id,grupo_id").eq("pluggy_account_id", a.id).maybeSingle();
-      if (!ex.data) row.grupo_id = casal; else grpConta = ex.data.grupo_id;
+      if (!ex.data) row.grupo_id = casal; else { grpConta = ex.data.grupo_id; if (grpConta && grpConta !== casal) grpBanco = grpConta; }
       const r = await sb.from("contas").upsert(row, { onConflict: "pluggy_account_id" }).select("id").single();
       if (r.error) throw new Error("conta: " + r.error.message);
       refId = r.data.id; nContas++;
@@ -185,7 +186,7 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
         pluggy_account_id: "inv:" + v.id, ativo: Number(v.balance ?? v.amount ?? 0) > 0, atualizado_em: new Date().toISOString(),
       };
       const ex = await sb.from("contas").select("id").eq("pluggy_account_id", row.pluggy_account_id).maybeSingle();
-      if (!ex.data) row.grupo_id = (gr || []).find((g: any) => /invest/i.test(g.nome))?.id || casal;
+      if (!ex.data) row.grupo_id = grpBanco || (gr || []).find((g: any) => /invest/i.test(g.nome))?.id || casal;
       const r = await sb.from("contas").upsert(row, { onConflict: "pluggy_account_id" });
       if (!r.error) nInv++;
     }

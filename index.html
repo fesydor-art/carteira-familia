@@ -1464,18 +1464,31 @@ function modalConta(c){
         <label class="field"><span>Saldo inicial (R$)</span><input id="c-saldo" type="number" step="0.01" inputmode="decimal" value="${c.saldo_inicial}"></label>
       </div>
       ${S.grupoOK?`<label class="field"><span>Perfil</span><select id="c-grp">${optsGrupos(ed?c.grupo_id:grupoPadrao())}</select></label>`:""}
+      ${S.grupoOK&&ed&&c.instituicao_id?`<label class="check" id="c-tudo-w" hidden><input type="checkbox" id="c-tudo" checked> Mover também os investimentos e cartões deste banco para o mesmo perfil</label>`:""}
       <div class="err" id="c-err"></div>
       <div class="row-end">${ed?`<button type="button" class="btn ghost" id="c-arq">Arquivar</button>`:""}<button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Salvar</button></div>
     </form>`, ()=>{
       $("#c-tipo").onchange=()=>{ if($("#c-tipo").value==="dinheiro"){ const d=S.inst.find(i=>i.nome==="Dinheiro"); if(d) $("#c-inst").value=d.id; } };
       if(!ed) $("#c-tipo").onchange();
+      if($("#c-tudo-w")) $("#c-grp").onchange=()=>{ $("#c-tudo-w").hidden=$("#c-grp").value===(c.grupo_id||""); };
       if(ed) $("#c-arq").onclick=async()=>{await sb.from("contas").update({ativo:false}).eq("id",c.id); fechar(); await carregar(); render(); toast("Conta arquivada");};
       $("#fc").onsubmit=async e=>{e.preventDefault();
         const row={familia_id:S.fam.id,nome:$("#c-nome").value.trim(),tipo:$("#c-tipo").value,titular_id:$("#c-tit").value,
           instituicao_id:$("#c-inst").value||null,saldo_inicial:Number($("#c-saldo").value||0)};
         if(S.grupoOK) row.grupo_id=$("#c-grp").value||null;
         // mudou o perfil da conta: os lançamentos dela vão junto (antes, para continuarem visíveis a quem pode ver)
-        if(ed && S.grupoOK && row.grupo_id!==c.grupo_id){ const rl=await sb.from("lancamentos").update({grupo_id:row.grupo_id}).eq("conta_id",c.id); if(rl.error) return $("#c-err").textContent=rl.error.message; }
+        if(ed && S.grupoOK && row.grupo_id!==c.grupo_id){ const rl=await sb.from("lancamentos").update({grupo_id:row.grupo_id}).eq("conta_id",c.id); if(rl.error) return $("#c-err").textContent=rl.error.message;
+          // opcional: leva junto tudo do mesmo banco (investimentos, outras contas e cartões) e seus lançamentos
+          if($("#c-tudo") && $("#c-tudo").checked && c.instituicao_id){
+            const outras=S.contas.filter(x=>x.instituicao_id===c.instituicao_id && x.id!==c.id).map(x=>x.id);
+            const cards=S.cartoes.filter(x=>x.instituicao_id===c.instituicao_id).map(x=>x.id);
+            const passos=[];
+            if(outras.length){ passos.push(sb.from("lancamentos").update({grupo_id:row.grupo_id}).in("conta_id",outras)); }
+            if(cards.length){ passos.push(sb.from("lancamentos").update({grupo_id:row.grupo_id}).in("cartao_id",cards)); }
+            for(const p of passos){ const x=await p; if(x.error) return $("#c-err").textContent=x.error.message; }
+            if(outras.length){ const x=await sb.from("contas").update({grupo_id:row.grupo_id}).in("id",outras); if(x.error) return $("#c-err").textContent=x.error.message; }
+            if(cards.length){ const x=await sb.from("cartoes").update({grupo_id:row.grupo_id}).in("id",cards); if(x.error) return $("#c-err").textContent=x.error.message; }
+          } }
         const r= ed? await sb.from("contas").update(row).eq("id",c.id) : await sb.from("contas").insert(row);
         if(r.error) return $("#c-err").textContent=r.error.message;
         fechar(); await carregar(); render(); toast(ed?"Conta atualizada":"Conta criada");};
