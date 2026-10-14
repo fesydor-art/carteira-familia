@@ -608,7 +608,7 @@ async function carregar(){
     q("rendas",["dia"]), q("despesas_fixas",["dia"])
   ]);
   const err=[m,i,c,k,g,ca,l,rd,df].find(r=>r.error); if(err) { toast("Erro ao carregar: "+err.error.message); }
-  S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
+  S._nomes=null; S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
   S.grupos=g.data||[]; S.cats=ca.data||[]; S.lanc=l.data||[];
   if(S.parcOK===undefined){ const pr=await sb.from("lancamentos").select("compra_id").eq("familia_id",fid).limit(1); S.parcOK=!pr.error; }
   if(S.perfilOK===undefined){ const pr=await sb.from("membros").select("avatar_url").eq("familia_id",fid).limit(1); S.perfilOK=!pr.error; }
@@ -764,7 +764,7 @@ function secContas(contas){
 function secLanc(n){
   const r=mesRef();
   let l = filtro(S.lanc,"user_id").filter(x=>x.data>=r.ini&&x.data<=r.fim);
-  const tRec=l.filter(x=>x.tipo==="receita").reduce((s,x)=>s+Number(x.valor),0), tDes=l.filter(x=>x.tipo==="despesa").reduce((s,x)=>s+Number(x.valor),0);
+  const tRec=l.filter(x=>x.tipo==="receita"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0), tDes=l.filter(x=>x.tipo==="despesa"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0);
   const total=l.length; l = l.slice(0,n);
   const nomeOrig = x => x.conta_id ? (S.contas.find(c=>c.id===x.conta_id)||{}).nome : (S.cartoes.find(c=>c.id===x.cartao_id)||{}).nome;
   return `<section class="panel">
@@ -776,7 +776,7 @@ function secLanc(n){
         <div class="dot" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</div>
         <div><div class="t">${esc(x.descricao)}</div><div class="m">${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
         <div class="r"><div class="amt ${x.tipo==="receita"?"pos":"neg"}">${x.tipo==="receita"?"+":"−"} ${brl(x.valor)}</div>
-          <div class="acts">${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
+          <div class="acts">${ehInterno(x)?`<span class="pill" title="Movimentação entre suas contas: não conta como gasto nem renda">interno</span>`:""}${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
       </div>`}).join("") : `<div class="empty">${ic("receipt-text")} Sem lançamentos em ${r.nome}. Use “Novo lançamento” para registrar uma entrada ou saída.</div>`}
     </div></section>`;
 }
@@ -810,40 +810,102 @@ S.sim = { ajuste:0, extraValor:0, extraMes:1 };
 S.fech = "0";
 
 function liquidoAtual(){ return filtro(S.contas).filter(c=>c.tipo!=="investimento").reduce((s,c)=>s+Number(c.saldo),0); }
-function mediaVariavel(){
-  const lim=new Date(); lim.setDate(lim.getDate()-90); const ls=iso(lim);
-  const fixas=new Set(S.cats.filter(c=>/contas fixas|moradia/i.test(c.nome)).map(c=>c.id));
-  const inv=new Set(S.grupos.filter(g=>/invest/i.test(g.nome)).map(g=>g.id));
-  const l=filtro(S.lanc,"user_id").filter(x=>x.tipo==="despesa"&&x.data>=ls&&!fixas.has(x.categoria_id)&&!(S.pessoa==="todos"&&inv.has(x.grupo_id)));
-  return l.reduce((s,x)=>s+Number(x.valor),0)/3;
-}
-const vazio=v=>v===null||v===undefined||v==="";
-/* valor digitado na Projeção vale para "Todos"; com filtro de pessoa/perfil usa a média real daquele filtro */
-function variavelMes(){ return (vazio(S.proj.variavel) || S.pessoa!=="todos") ? mediaVariavel() : Number(S.proj.variavel); }
 
-/* motor dia a dia: rendas, gastos fixos, faturas dos cartões e gasto do dia a dia */
+/* ---- movimentações internas: pagar fatura, aplicar/resgatar investimento, Pix entre contas próprias.
+   Não são gasto nem renda: ficam fora das médias, totais e projeções. ---- */
+const normTxt=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+function nomesProprios(){
+  if(S._nomes) return S._nomes;
+  const md=S.user?.user_metadata||{};
+  const n=[...S.membros.map(m=>m.nome_completo||""),md.full_name||"",md.name||""].filter(Boolean);
+  return S._nomes=n.map(s=>normTxt(s).split(/\s+/).filter(t=>t.length>2)).filter(a=>a.length>=2);
+}
+function ehInterno(l){
+  const d=normTxt(l.descricao);
+  if(/pagamento de fatura|pagamento recebido|pagto\.? fatura|pgto\.? fatura|pagamento fatura|aplicacao|resgate|\brdb\b|\bcdb\b|tesouro direto|caixinha|cofrinho|guardado|investimento|estorno/.test(d)) return true;
+  const cp=d.split("|")[1]||""; if(!cp) return false;
+  return nomesProprios().some(tok=>tok.every(t=>cp.includes(t)));
+}
+const ehParcela=l=>l.parcela_total>1 || /\(\d+\/\d+\)\s*$/.test(l.descricao||"");
+
+/* médias mensais (últimos 90 dias até hoje), sem internos e sem parcelas (parcelas entram uma a uma) */
+function estimativas(){
+  const hj=iso(new Date()), d0=new Date(); d0.setDate(d0.getDate()-90); const ini=iso(d0);
+  const fixas=new Set(S.cats.filter(c=>/contas fixas|moradia/i.test(c.nome)).map(c=>c.id));
+  const todos=filtro(S.lanc,"user_id").filter(l=>l.data>=ini&&l.data<=hj);
+  const ls=todos.filter(l=>l.tipo==="despesa"&&!ehInterno(l)&&!ehParcela(l));
+  const primeira=todos.reduce((m,l)=>l.data<m?l.data:m,hj);
+  const meses=Math.max(1,Math.min(3,(new Date(hj)-new Date(primeira))/864e5/30));
+  const conta=ls.filter(l=>!l.cartao_id&&!fixas.has(l.categoria_id)).reduce((s,l)=>s+Number(l.valor),0)/meses;
+  const cartao={}; ls.filter(l=>l.cartao_id).forEach(l=>{ cartao[l.cartao_id]=(cartao[l.cartao_id]||0)+Number(l.valor)/meses; });
+  return {conta,cartao};
+}
+function mediaVariavel(){ const e=estimativas(); return e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0); }
+const vazio=v=>v===null||v===undefined||v==="";
+/* valor digitado na Projeção vale para "Todos" (reparte entre conta e cartões); com filtro usa a média real do filtro */
+function divisaoVariavel(){
+  const e=estimativas(); if(vazio(S.proj.variavel)||S.pessoa!=="todos") return e;
+  const alvo=Number(S.proj.variavel), tot=e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0);
+  if(tot<=0) return {conta:alvo,cartao:{}};
+  const k=alvo/tot; return {conta:e.conta*k,cartao:Object.fromEntries(Object.entries(e.cartao).map(([i,v])=>[i,v*k]))};
+}
+function variavelMes(){ const e=divisaoVariavel(); return e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0); }
+
+/* ---- cartões: em que mês (0 = este) cada fatura é paga ---- */
+/* dia de fechamento: o do banco ou, se não vier, 7 dias antes do vencimento */
+function diaFech(c){ const f=Number(c.dia_fechamento)||0; if(f) return f; const dv=Number(c.dia_vencimento)||0; if(!dv) return 0; const x=dv-7; return x>=1?x:x+30; }
+function mesFaturaAtual(c,hd){ const dv=Number(c.dia_vencimento)||0; return (!dv||dv>hd)?0:1; }
+function mesPagamento(c,dataIso,hoje){
+  const d=new Date(dataIso+"T12:00:00"), fech=diaFech(c), dv=Number(c.dia_vencimento)||0;
+  let off=(d.getFullYear()-hoje.getFullYear())*12+(d.getMonth()-hoje.getMonth());
+  if(fech && d.getDate()>fech) off+=1;          // depois do fechamento -> próxima fatura
+  if(!fech || (dv && dv<=fech)) off+=1;          // vencimento cai no mês seguinte ao fechamento
+  return off;
+}
+function fracaoAteFechar(c,hoje){
+  const fech=diaFech(c); if(!fech) return .5;
+  let alvo=new Date(hoje.getFullYear(),hoje.getMonth(),fech,12); if(alvo<=hoje) alvo=new Date(hoje.getFullYear(),hoje.getMonth()+1,fech,12);
+  return Math.min(1,Math.max(0,(alvo-hoje)/864e5/30));
+}
+/* faturas previstas por cartão e mês: {cartaoId:{m:{valor, atual, estimado, parcelas}}} */
+function faturasPrevistas(nMeses,aj=1){
+  const hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate(), p=S.proj, hj=iso(hoje);
+  const est=divisaoVariavel(), out={};
+  filtro(S.cartoes).forEach(c=>{
+    const md=mesFaturaAtual(c,hd), media=est.cartao[c.id]||0, f={};
+    for(let m=md;m<nMeses;m++){
+      const inf=Math.pow(1+Number(p.inflacao)/100,m/12);
+      f[m]= m===md ? {atual:Number(c.fatura_atual)||0, estimado:media*inf*aj*fracaoAteFechar(c,hoje), parcelas:0}
+                   : {atual:0, estimado:media*inf*aj, parcelas:0};
+    }
+    S.lanc.filter(l=>l.cartao_id===c.id&&l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)).forEach(l=>{
+      const m=Math.max(md,mesPagamento(c,l.data,hoje)); if(f[m]) f[m].parcelas+=Number(l.valor); });
+    Object.values(f).forEach(x=>x.valor=x.atual+x.estimado+x.parcelas);
+    out[c.id]=f;
+  });
+  return out;
+}
+
+/* motor dia a dia: rendas, gastos fixos, faturas (atual + estimadas + parcelas), gasto em conta e lançamentos futuros */
 function motor(nMeses, sim){
-  const p=S.proj, hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate();
+  const p=S.proj, hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate(), hj=iso(hoje);
   const rendas=filtro(S.rendas), desp=filtro(S.despesas).map(d=>({...d,rest:vazio(d.parcelas_restantes)?Infinity:Number(d.parcelas_restantes)}));
-  const cartoes=filtro(S.cartoes).filter(c=>Number(c.fatura_atual)>0);
+  const aj=1+((sim&&sim.ajuste)||0)/100, cartoes=filtro(S.cartoes), fat=faturasPrevistas(nMeses,aj), varConta=divisaoVariavel().conta;
   const s0 = vazio(p.saldoInicial) ? liquidoAtual() : Number(p.saldoInicial);
-  const varMes=variavelMes(), aj=1+((sim&&sim.ajuste)||0)/100;
   let saldo=s0, fator=1; const dias=[{d:new Date(hoje),saldo,ev:false}], meses=[];
-  const futuros={}; filtro(S.lanc,"user_id").filter(l=>l.data>iso(hoje)).forEach(l=>(futuros[l.data]=futuros[l.data]||[]).push(l));
+  const futuros={}; filtro(S.lanc,"user_id").filter(l=>l.data>hj&&!l.cartao_id&&!ehInterno(l)).forEach(l=>(futuros[l.data]=futuros[l.data]||[]).push(l));
   for(let m=0;m<nMeses;m++){
     const y=hoje.getFullYear(), mo=hoje.getMonth()+m, first=new Date(y,mo,1,12), mes=first.getMonth(), last=new Date(y,mo+1,0,12).getDate();
     if(m>0 && mes===Number(p.mesReajuste)) fator*=1+Number(p.reajuste)/100;
-    const inf=Math.pow(1+Number(p.inflacao)/100, m/12), start=m===0?hd+1:1, vDia=varMes*inf*aj/last;
+    const inf=Math.pow(1+Number(p.inflacao)/100, m/12), start=m===0?hd+1:1, vDia=varConta*inf*aj/last;
     let rec=0,gas=0;
     for(let day=start; day<=last; day++){
       let r=0,g=0;
       rendas.forEach(x=>{ if(Math.min(x.dia,last)===day) r+=Number(x.valor)*(x.tipo==="salario"?fator:1);
         if(x.recebe_13 && mes===11 && day===Math.min(20,last)) r+=Number(x.valor)*fator; });
       desp.forEach(x=>{ if(Math.min(x.dia,last)===day && x.rest>0){ g+=Number(x.valor)*inf*aj; x.rest--; } });
-      cartoes.forEach(c=>{ const dv=Number(c.dia_vencimento)||0, mDue=(dv&&dv>hd)||!dv?0:1, dd=dv?Math.min(dv,last):last;
-        if(m===mDue && day===dd) g+=Number(c.fatura_atual); });
-      const dIso=iso(new Date(y,mo,day,12));
-      (futuros[dIso]||[]).forEach(l=>{ if(l.tipo==="receita") r+=Number(l.valor); else g+=Number(l.valor); });
+      cartoes.forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const dd=Math.max(start,Math.min(Number(c.dia_vencimento)||last,last)); if(day===dd) g+=f.valor; });
+      (futuros[iso(new Date(y,mo,day,12))]||[]).forEach(l=>{ if(l.tipo==="receita") r+=Number(l.valor); else g+=Number(l.valor); });
       if(sim && sim.extraValor>0 && m===Number(sim.extraMes) && day===Math.max(start,Math.min(15,last))) g+=Number(sim.extraValor);
       const ev=r>0||g>0; g+=vDia;
       saldo+=r-g; rec+=r; gas+=g;
@@ -919,7 +981,7 @@ function desenharFech(){
       <div><span class="label">Entra / sai ${k>=3?"no período":"no mês"}</span><span class="v"><span style="color:var(--pos)">+${abrev(ent).replace("R$ ","")}</span> <span class="muted" style="font-weight:500">/</span> <span style="color:var(--neg)">−${abrev(sai).replace("R$ ","").replace("−","")}</span></span></div>
     </div>
     ${k>=3 ? mensalSVG(ms,W) : diarioSVG(r.dias,W)}
-    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento e ${brl(variavelMes())}/mês de gastos do dia a dia.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
+    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (atual + compras previstas + parcelas) e ${brl(divisaoVariavel().conta)}/mês de gastos no débito/Pix. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
 }
 
@@ -1179,20 +1241,23 @@ function contasDoMes(o=S.mes){
     const parc = R===null ? "" : (o===0&&dia<=hd ? "" : ` · parcela ${idx} de ${R}${R-idx===0?" (última)":""}`);
     const cat=S.cats.find(c=>c.id===x.categoria_id);
     itens.push({dia,tipo:"despesa",icone:cat?.icone||"calendar-days",desc:x.descricao,meta:nomeMembro(x.titular_id)+parc,valor:Number(x.valor)*inf,st:st(dia)}); });
-  filtro(S.cartoes).filter(c=>Number(c.fatura_atual)>0).forEach(c=>{ const dv=Number(c.dia_vencimento)||0, mDue=(dv&&dv>hd)||!dv?0:1;
-    if(o===mDue){ const dia=dv?Math.min(dv,r.ult):r.ult; itens.push({dia,tipo:"despesa",icone:"credit-card",desc:"Fatura "+(c.instituicao||c.nome)+" · "+c.nome,meta:nomeMembro(c.titular_id)+(c.origem==="pluggy"?" · valor do banco":" · fatura atual"),valor:Number(c.fatura_atual),st:st(dia)}); } });
-  // compras parceladas e lançamentos futuros já registrados
+  const fat=faturasPrevistas(o+1);
+  filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][o]; if(!f||f.valor<=0) return;
+    const dia=Math.min(Number(c.dia_vencimento)||r.ult,r.ult), partes=[];
+    if(f.atual) partes.push(`${brl(f.atual)} já na fatura`); if(f.parcelas) partes.push(`${brl(f.parcelas)} de parcelas`); if(f.estimado) partes.push(`~${brl(f.estimado)} de compras previstas`);
+    itens.push({dia,tipo:"despesa",icone:"credit-card",desc:"Fatura "+(c.instituicao||"")+" · "+c.nome+(f.atual&&!f.estimado&&!f.parcelas?"":" (prevista)"),meta:nomeMembro(c.titular_id)+" · "+partes.join(" + "),valor:f.valor,st:st(dia)}); });
+  // lançamentos futuros já registrados (parcelas no cartão são informativas: já estão somadas na fatura acima)
   const hojeIso=iso(hoje);
-  filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=r.fim&&(o>0||l.data>hojeIso)).forEach(l=>{
+  filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=r.fim&&(o>0||l.data>hojeIso)&&!ehInterno(l)).forEach(l=>{
     const dia=Number(l.data.slice(8,10)), orig=l.cartao_id?(S.cartoes.find(c=>c.id===l.cartao_id)||{}):(S.contas.find(c=>c.id===l.conta_id)||{});
     const pt=parcTxt(l);
-    itens.push({dia,tipo:l.tipo,icone:l.cartao_id?"credit-card":"calendar-days",desc:l.descricao.replace(/\s*\(\d+\/\d+\)$/,""),
-      meta:nomeMembro(l.user_id)+(pt?` · parcela ${pt.replace("/"," de ")}`:"")+(orig.nome?` · ${orig.nome}`:""),valor:Number(l.valor),st:st(dia)}); });
+    itens.push({dia,tipo:l.tipo,icone:l.cartao_id?"layers":"calendar-days",desc:l.descricao.replace(/\s*\(\d+\/\d+\)$/,""),info:!!l.cartao_id,
+      meta:nomeMembro(l.user_id)+(pt?` · parcela ${pt.replace("/"," de ")}`:"")+(orig.nome?` · ${orig.nome}`:""),valor:Number(l.valor),st:l.cartao_id?"na fatura":st(dia)}); });
   return itens.sort((a,b)=>a.dia-b.dia);
 }
 function secMes(){
   const r=mesRef(), itens=contasDoMes();
-  const rec=itens.filter(i=>i.tipo==="receita").reduce((s,i)=>s+i.valor,0), pag=itens.filter(i=>i.tipo==="despesa").reduce((s,i)=>s+i.valor,0);
+  const rec=itens.filter(i=>i.tipo==="receita"&&!i.info).reduce((s,i)=>s+i.valor,0), pag=itens.filter(i=>i.tipo==="despesa"&&!i.info).reduce((s,i)=>s+i.valor,0);
   const passado=S.mes<0;
   return `<section class="panel">
     <div class="sec-h"><h2>Contas de ${r.nome}</h2><button class="btn ghost sm" data-tab="cad">${ic("settings","ico",14)} Cadastros</button></div>
@@ -1206,7 +1271,7 @@ function secMes(){
       <div class="item${i.st==="passou"?" passou":""}">
         <div class="dot date"><b>${i.dia}</b><small>${r.curto}</small></div>
         <div><div class="t"><span class="ti">${ic(i.icone,"ico",15)}</span>${esc(i.desc)}</div><div class="m">${esc(i.meta)}</div></div>
-        <div class="r"><div class="amt ${i.tipo==="receita"?"pos":"neg"}">${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span></div>
+        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span></div>
       </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nada previsto. Cadastre salários e gastos fixos em Cadastros.</div>`}</div>`}
   </section>`;
 }
