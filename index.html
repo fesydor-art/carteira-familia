@@ -864,8 +864,9 @@ function mediaVariavel(){ const e=estimativas(); return e.conta+Object.values(e.
 const vazio=v=>v===null||v===undefined||v==="";
 /* valor digitado na Projeção vale para "Todos" (reparte entre conta e cartões); com filtro usa a média real do filtro */
 function divisaoVariavel(){
-  if(S.proj && S.proj.semMedia) return {conta:0,cartao:{}};   // modo "só contas reais": sem estimativa de gastos do dia a dia
-  const e=estimativas(); if(vazio(S.proj.variavel)||S.pessoa!=="todos") return e;
+  // sem estimativas automáticas: só entra gasto do dia a dia se o usuário digitar um valor na Projeção
+  if(!S.proj || vazio(S.proj.variavel) || S.pessoa!=="todos") return {conta:0,cartao:{}};
+  const e=estimativas();
   const alvo=Number(S.proj.variavel), tot=e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0);
   if(tot<=0) return {conta:alvo,cartao:{}};
   const k=alvo/tot; return {conta:e.conta*k,cartao:Object.fromEntries(Object.entries(e.cartao).map(([i,v])=>[i,v*k]))};
@@ -1003,7 +1004,7 @@ function desenharFech(){
     </div>
     ${k>=3 ? mensalSVG(ms,W) : diarioSVG(r.dias,W)}
     ${quebraHTML(r.s0, k>=3?ms:(k===1?ms.slice(0,2):ms.slice(0,1)), alvo)}
-    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (atual + compras previstas + parcelas) e ${brl(divisaoVariavel().conta)}/mês de gastos no débito/Pix. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
+    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (fatura do banco + parcelas)${divisaoVariavel().conta?` e ${brl(divisaoVariavel().conta)}/mês de gasto do dia a dia que você digitou`:""}. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
   el.querySelectorAll("[data-ver-debito]").forEach(b=>b.onclick=modalDebito);
   el.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.proj.semMedia=b.dataset.modo==="reais"; salvarProj(); render(); });
@@ -1041,15 +1042,11 @@ function quebraHTML(s0, ms, alvo){
   Object.entries(fat).filter(([,v])=>v>0.005).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
     linhas.push(`<div class="qrow"><span>Fatura ${esc(c.instituicao||"")} · ${esc(c.nome||"cartão")} <button class="link" data-ver-fatura="${mesDe[id]}">ver itens</button></span><span class="num neg">− ${brl(v)}</span></div>`); });
   if(soma("fixos")) linhas.push(linha("Gastos fixos (Cadastros)",-soma("fixos")));
-  if(soma("debito")) linhas.push(`<div class="qrow"><span>Estimativa de gastos no débito/Pix (você ainda não gastou) <button class="link" data-ver-debito>como calculo</button></span><span class="num neg">− ${brl(soma("debito"))}</span></div>`);
+  if(soma("debito")) linhas.push(linha("Gasto do dia a dia (valor que você digitou na Projeção)",-soma("debito")));
   if(soma("futDesp")) linhas.push(linha("Saídas já lançadas na conta",-soma("futDesp")));
   if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
   linhas.push(`<div class="qrow tot"><span>${esc(alvo.label)} fecha em</span><span class="num ${alvo.saldo<0?"neg":""}">${brl(alvo.saldo)}</span></div>`);
-  const sem=!!(S.proj&&S.proj.semMedia);
-  const modo=`<div class="seg" role="group" aria-label="O que considerar" style="margin:4px 0 8px">
-    <button type="button" data-modo="reais" aria-pressed="${sem}">Só contas a pagar</button>
-    <button type="button" data-modo="media" aria-pressed="${!sem}">Contas + gasto do dia a dia</button></div>
-    <p class="muted" style="margin:0 0 6px;font-size:.78rem">${sem?"Mostrando só o que já está registrado: faturas no banco, parcelas, gastos fixos e rendas. Gastos que você ainda vai fazer não entram.":"Inclui uma estimativa do que você costuma gastar no débito/Pix e no cartão (média dos últimos 3 meses), mesmo que ainda não tenha gasto."}</p>`;
+  const modo=`<p class="muted" style="margin:4px 0 6px;font-size:.78rem">Só o que já está registrado: faturas do banco, parcelas, gastos fixos e rendas. Nada de estimativa.</p>`;
   return `<details class="quebra" open><summary>De onde vem esse valor</summary>${modo}${linhas.join("")}</details>`;
 }
 
@@ -1153,7 +1150,7 @@ function secProj(){
     </div>
     <div class="grid2">
       <label class="field"><span>Inflação dos gastos (% a.a.)</span><input id="pj-inf" type="number" step="0.1" value="${p.inflacao}"></label>
-      <label class="field"><span>Gasto do dia a dia/mês</span><input id="pj-var" type="number" step="0.01" value="${p.variavel??""}" placeholder="${brl(mediaVariavel())} (média)"></label>
+      <label class="field"><span>Gasto do dia a dia/mês</span><input id="pj-var" type="number" step="0.01" value="${p.variavel??""}" placeholder="Opcional — vazio = não estima"></label>
     </div>
     <div class="label" style="margin-top:6px">Vem de Cadastros</div>
     <div class="lrow"><span>Rendas (${ren.length})</span><strong class="num" style="color:var(--pos)">${brl(tr)}/mês</strong></div>
