@@ -613,6 +613,7 @@ async function carregar(){
   if(S.parcOK===undefined){ const pr=await sb.from("lancamentos").select("compra_id").eq("familia_id",fid).limit(1); S.parcOK=!pr.error; }
   if(S.perfilOK===undefined){ const pr=await sb.from("membros").select("avatar_url").eq("familia_id",fid).limit(1); S.perfilOK=!pr.error; }
   if(S.grupoOK===undefined){ const pr=await sb.from("contas").select("grupo_id").eq("familia_id",fid).limit(1); S.grupoOK=!pr.error; }
+  const cx=await sb.from("conexoes_pluggy").select("*").eq("familia_id",fid); S.conexoes=cx.error?[]:(cx.data||[]);
   S.rendas=(rd.data||[]).filter(x=>x.ativo!==false); S.despesas=(df.data||[]).filter(x=>x.ativo!==false);
   const p = await sb.from("projecoes").select("*").eq("familia_id",fid);
   S.projs = p.data||[];
@@ -628,6 +629,9 @@ async function boot(){
   if(!mem || !mem.length) return renderOnboarding();
   S.fam = mem[0].familias;
   await carregar(); render();
+  if(!DEMO && (S.conexoes||[]).length && !S.autoSync){ S.autoSync=true; let ult=0; try{ult=Number(localStorage.getItem("cf-sync-"+S.fam.id)||0);}catch(e){}
+    const maisRecente=Math.max(ult,...S.conexoes.map(c=>c.ultima_sync?new Date(c.ultima_sync).getTime():0));
+    if(Date.now()-maisRecente>12*36e5) sincronizarBancos(); }
 }
 
 /* ---------- RENDER PRINCIPAL ---------- */
@@ -705,6 +709,10 @@ function render(){
       <div class="err" id="m-err"></div><div class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Salvar</button></div></form>`,()=>{
       $("#fm").onsubmit=async e=>{e.preventDefault(); const r=await sb.from("membros").update({nome:$("#m-nome").value.trim()}).eq("familia_id",S.fam.id).eq("user_id",m.user_id);
         if(r.error) return $("#m-err").textContent=r.error.message; fechar(); await carregar(); render(); toast("Usuário atualizado");};});});
+  const pla=$("#pl-add"); if(pla) pla.onclick=conectarBanco;
+  const pls=$("#pl-sync"); if(pls) pls.onclick=()=>sincronizarBancos(pls);
+  document.querySelectorAll("[data-pl-rm]").forEach(b=>b.onclick=async()=>{ if(b.dataset.c!=="1"){b.dataset.c="1";b.classList.add("confirm");b.textContent="Desconectar?";return;}
+    try{ await chamarPluggy({acao:"remover",itemId:b.dataset.plRm}); await carregar(); render(); toast("Banco desconectado"); }catch(e){ toast(e.message); } });
   document.querySelectorAll("[data-cad]").forEach(b=>b.onclick=()=>modalCad(b.dataset.cad));
   document.querySelectorAll("[data-cad-edit]").forEach(b=>b.onclick=()=>modalCad(b.dataset.cadEdit,listaCad(b.dataset.cadEdit).find(x=>x.id===b.dataset.id)));
   const sair=$("#sair"); if(sair) sair.onclick=()=>sb.auth.signOut();
@@ -790,8 +798,6 @@ function secAjustes(){
     <div class="label" style="margin-top:8px">Convidar pessoa</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="invite">${esc(S.fam.codigo_convite)}</span><button class="btn ghost sm" id="copiar">${ic("copy","ico",14)} Copiar</button></div>
     <p class="muted" style="margin:0">A pessoa cria a conta dela no app (Google ou e-mail), escolhe "Entrar com código de convite" e digita esse código. Ela aparece aqui e no filtro do topo.</p>
-    <div class="label" style="margin-top:8px">Bancos conectados automaticamente</div>
-    <p class="muted" style="margin:0">A conexão com Nubank, C6, Bradesco, BB, Caixa e BV via Open Finance entra na próxima etapa.</p>
     <button class="btn ghost" id="sair" style="align-self:flex-start;margin-top:8px">${ic("log-out","ico",16)} Sair</button>
   </section>`;
 }
@@ -1071,6 +1077,55 @@ function painelCad(tab,titulo,linhas,rodape,vazioTxt){
   return `<section class="panel"><div class="sec-h"><h2>${titulo}</h2><button class="btn ghost sm" data-cad="${tab}">${ic("plus","ico",15)} Adicionar</button></div>
     <div class="list">${linhas.length?linhas.join(""):`<div class="empty">${ic("circle-plus")} ${vazioTxt}</div>`}</div>${rodape||""}</section>`;
 }
+/* ---------- OPEN FINANCE (Pluggy / MeuPluggy) ---------- */
+function secConexoes(){
+  const cx=S.conexoes||[];
+  const quando=d=>d?new Date(d).toLocaleString("pt-BR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"nunca";
+  return `<section class="panel">
+    <div class="sec-h"><h2>Bancos conectados</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${cx.length?`<button class="btn ghost sm" id="pl-sync">${ic("refresh-cw","ico",14)} Sincronizar</button>`:""}<button class="btn sm" id="pl-add">${ic("link-2","ico",14)} Conectar banco</button></div></div>
+    <p class="muted" style="margin:0;font-size:.82rem">Via Open Finance (MeuPluggy). Saldos, limites, faturas e transações entram sozinhos. Conecte um banco por vez.</p>
+    <div class="list">${cx.length?cx.map(c=>{ const exp=c.consentimento_expira_em, dias=exp?Math.round((new Date(exp)-new Date())/864e5):null;
+      return `<div class="item"><div class="dot bank" style="background:linear-gradient(135deg,#4F46E5,#7C3AED)">${ini(c.banco)}</div>
+        <div><div class="t">${esc(c.banco)}</div><div class="m">${esc(nomeMembro(c.user_id))} · atualizado ${quando(c.ultima_sync)}${dias!==null?` · consentimento ${dias<=30?`<b style="color:var(--warn)">vence em ${dias} dias</b>`:"até "+dt(exp)}`:""}</div></div>
+        <div class="r"><span class="pill ${/ERROR|LOGIN|OUTDATED/i.test(c.status)?"":"auto"}">${/ERROR|LOGIN|OUTDATED/i.test(c.status)?"reconectar":"ativo"}</span>
+          <button class="iconbtn sm danger" data-pl-rm="${esc(c.pluggy_item_id)}" aria-label="Desconectar ${esc(c.banco)}" title="Desconectar">${ic("unlink","ico",14)}</button></div></div>`; }).join("")
+      :`<div class="empty">${ic("landmark")} Nenhum banco conectado ainda.</div>`}</div>
+    <div class="err" id="pl-err" role="alert"></div>
+  </section>`;
+}
+async function chamarPluggy(body){
+  if(DEMO) throw new Error("No modo demonstração não dá para conectar bancos.");
+  const r=await sb.functions.invoke("pluggy",{body});
+  if(r.error){ let m=r.error.message; try{ const j=await r.error.context.json(); if(j.error) m=j.error; }catch(e){} throw new Error(m); }
+  if(r.data?.error) throw new Error(r.data.error);
+  return r.data;
+}
+function carregarScriptPluggy(){
+  if(window.PluggyConnect) return Promise.resolve();
+  return new Promise((ok,ko)=>{ const s=document.createElement("script"); s.src="https://cdn.pluggy.ai/pluggy-connect/v2.14.2/pluggy-connect.js";
+    s.onload=ok; s.onerror=()=>{ const s2=document.createElement("script"); s2.src="https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js"; s2.onload=ok; s2.onerror=()=>ko(new Error("Não consegui carregar o Pluggy Connect.")); document.head.appendChild(s2); };
+    document.head.appendChild(s); });
+}
+const resumoSync = res => (res||[]).map(r=>r.erro?`${r.banco}: ${r.erro}`:`${r.banco}: ${r.contas} contas, ${r.cartoes} cartões, ${r.transacoes} transações`).join(" · ");
+async function conectarBanco(){
+  const err=$("#pl-err"); if(err) err.textContent="";
+  try{
+    const [t]=await Promise.all([chamarPluggy({acao:"token"}),carregarScriptPluggy()]);
+    const pc=new window.PluggyConnect({ connectToken:t.token, includeSandbox:false,
+      onSuccess: async (data)=>{ const id=data?.item?.id||data?.itemId||data?.id; toast("Banco conectado. Importando dados…");
+        try{ const r=await chamarPluggy({acao:"salvar_item",itemId:id}); await carregar(); render(); toast(resumoSync(r.resultados)); }
+        catch(e){ const er=$("#pl-err"); if(er) er.textContent=e.message; } },
+      onError: (e)=>{ const er=$("#pl-err"); if(er) er.textContent="Pluggy: "+(e?.message||"erro na conexão"); } });
+    await pc.init();
+  }catch(e){ if(err) err.textContent=e.message; else toast(e.message); }
+}
+async function sincronizarBancos(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML=ic("refresh-cw","ico",14)+" Sincronizando…"; }
+  try{ const r=await chamarPluggy({acao:"sync"}); try{localStorage.setItem("cf-sync-"+S.fam.id,String(Date.now()));}catch(e){} await carregar(); render(); toast(resumoSync(r.resultados)||"Sincronizado"); }
+  catch(e){ const er=$("#pl-err"); if(er) er.textContent=e.message; else toast(e.message); if(btn){btn.disabled=false;btn.innerHTML=ic("refresh-cw","ico",14)+" Sincronizar";} }
+}
+
 function secCadastros(){
   const g=id=>S.grupos.find(x=>x.id===id), c=id=>S.cats.find(x=>x.id===id);
   const TIP={salario:"briefcase",aluguel:"key-round",outros:"coins"};
@@ -1085,6 +1140,7 @@ function secCadastros(){
   const bancos=S.inst.map(x=>linhaCad("instituicoes",x,{t:ini(x.nome),bank:true,bg:`background:linear-gradient(135deg,${esc(x.cor1)},${esc(x.cor2)})`},x.nome,"Cor usada nos cartões e contas",null));
   return `<div class="cadgrid">
     ${secAjustes()}
+    ${secConexoes()}
     ${painelCad("rendas","Rendas e salários",rendas,`<div style="display:flex;flex-direction:column;gap:4px">${totPor(S.rendas)}</div>`,"Cadastre o salário líquido de cada um e outras rendas, como aluguéis.")}
     ${painelCad("despesas_fixas","Gastos fixos",desp,`<div style="display:flex;flex-direction:column;gap:4px">${totPor(S.despesas)}</div>`,"Aluguel, financiamento, escola, internet, parcelas…")}
     ${painelCad("categorias","Categorias",cats,"","Nenhuma categoria.")}
