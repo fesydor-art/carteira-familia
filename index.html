@@ -1264,7 +1264,7 @@ function secProj(){
       <label class="field"><span>Mês do reajuste</span><select id="pj-mre">${MESES.map((m,i)=>`<option value="${i}" ${i==p.mesReajuste?"selected":""}>${m}</option>`).join("")}</select></label>
     </div>
     <div class="grid2">
-      <label class="field"><span>Inflação dos gastos (% a.a.)</span><input id="pj-inf" type="number" step="0.1" value="${p.inflacao}"></label>
+      <label class="field"><span>Inflação do gasto do dia a dia (% a.a.)</span><input id="pj-inf" type="number" step="0.1" value="${p.inflacao}"></label>
       <label class="field"><span>Gasto do dia a dia/mês</span><input id="pj-var" type="number" step="0.01" value="${p.variavel??""}" placeholder="Opcional — vazio = não estima"></label>
     </div>
     <div class="label" style="margin-top:6px">Vem de Cadastros</div>
@@ -1553,7 +1553,7 @@ function agenda(nMeses, aj=1){
         icone:x.tipo==="aluguel"?"key-round":x.tipo==="salario"?"briefcase":"arrow-down-left",quem:x.titular_id});
       if(x.recebe_13&&mes===11) add({kind:"renda",tipo:"receita",key:x.id+":13",ref:x,desc:"13º · "+x.descricao,dia:20,valor:Number(x.valor)*fator,icone:"gift",quem:x.titular_id}); });
     filtro(S.despesas).forEach(x=>{ const oc=ocorrencia(x,mk); if(!oc) return; const cat=S.cats.find(c=>c.id===x.categoria_id);
-      add({kind:"conta",tipo:"despesa",key:x.id,autoId:x.id,ref:x,desc:x.descricao,dia:x.dia,valor:Number(x.valor)*inf,icone:(cat&&cat.icone)||"receipt-text",quem:x.titular_id,
+      add({kind:"conta",tipo:"despesa",key:x.id,autoId:x.id,ref:x,desc:x.descricao,dia:x.dia,valor:Number(x.valor),icone:(cat&&cat.icone)||"receipt-text",quem:x.titular_id,
         parc: oc.faltam===null?"todo mês": oc.ultima?"última parcela": `faltam ${oc.faltam} parcelas`}); });
     filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f||f.total<=0.005) return;
       const parcial=!f.autoPaga&&f.pagoBanco>0.005;
