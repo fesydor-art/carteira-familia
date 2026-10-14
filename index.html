@@ -686,6 +686,7 @@ function render(){
         <div><span class="hd">${ic("credit-card","ico",15)}<span class="label">Limite disponível</span></span><span class="v">${brlV(limDisp)}</span><span class="s">de ${brl(limTot)}</span></div>
         <div><span class="hd">${ic("receipt-text","ico",15)}<span class="label">Faturas abertas</span></span><span class="v" style="color:var(--neg)">${brlV(fatura)}</span><span class="s">${cartoes.length} ${cartoes.length===1?"cartão":"cartões"}</span></div>
       </section>`:""}
+      ${S.tab==="geral" ? secSobra() : ""}
       ${S.tab==="geral" ? secFechamento() : ""}
       ${S.tab==="geral"||S.tab==="cartoes" ? secCartoes(cartoes) : ""}
       ${S.tab==="cartoes" ? secFaturas() : ""}
@@ -836,19 +837,23 @@ const chaveDesc=s=>normTxt(s).replace(/\s*\(\d+\/\d+\)\s*$/,"").replace(/\s+/g,"
 function ehInterno(l){
   const d=normTxt(l.descricao);
   if(((S.proj&&S.proj.ignorar)||[]).includes(chaveDesc(l.descricao))) return true;   // marcado por você como "não é gasto"
-  if(/pagamento de fatura|pagamento recebido|pagto\.? fatura|pgto\.? fatura|pagamento fatura|aplicacao|resgate|\brdb\b|\bcdb\b|tesouro|caixinha|cofrinho|guardado|investimento|investment|compra de acoes|venda de acoes|\bfii\b|estorno/.test(d)) return true;
-  if(!/pix|transf|\bted\b|\bdoc\b|\|/.test(d)) return false;
-  const cp=d.includes("|")?d.split("|").slice(1).join(" "):d;           // contraparte: nome depois do "|" ou a descrição toda (ex.: "Pix enviado para ...")
+  if(/pagamento de fatura|pagamento recebido|pagto\.? fatura|pgto\.? fatura|pagamento fatura|aplicacao|resgate|\brdb\b|\bcdb\b|tesouro|caixinha|cofrinho|guardado|investimento|investment|compra de acoes|venda de acoes|\bfii\b|bloqueio|estorno/.test(d)) return true;
+  const cp=d.includes("|")?d.split("|").slice(1).join(" "):d;           // contraparte: nome depois do "|" ou a descrição toda (ex.: "Pix enviado para ...", ou só o nome)
   return nomesProprios().some(tok=>tok.filter(t=>cp.includes(t)).length>=Math.min(2,tok.length) && cp.includes(tok[0]));
 }
 const ehParcela=l=>l.parcela_total>1 || /\(\d+\/\d+\)\s*$/.test(l.descricao||"");
 
 /* médias mensais (últimos 90 dias até hoje), sem internos e sem parcelas (parcelas entram uma a uma) */
+/* pagamento de empréstimo já coberto por um gasto fixo importado do banco: fica fora da média para não contar duas vezes */
+function ehPagEmprestimo(l){
+  if(!filtro(S.despesas).some(d=>d.origem==="pluggy")) return false;
+  return /parcela paga|pagamento de emprestimo|pagamento emprestimo|emprestimo|financiamento|prestacao/.test(normTxt(l.descricao));
+}
 function estimativas(){
   const hj=iso(new Date()), d0=new Date(); d0.setDate(d0.getDate()-90); const ini=iso(d0);
   const fixas=new Set(S.cats.filter(c=>/contas fixas|moradia/i.test(c.nome)).map(c=>c.id));
   const todos=filtro(S.lanc,"user_id").filter(l=>l.data>=ini&&l.data<=hj);
-  const ls=todos.filter(l=>l.tipo==="despesa"&&!ehInterno(l)&&!ehParcela(l));
+  const ls=todos.filter(l=>l.tipo==="despesa"&&!ehInterno(l)&&!ehParcela(l)&&!ehPagEmprestimo(l));
   const primeira=todos.reduce((m,l)=>l.data<m?l.data:m,hj);
   const meses=Math.max(1,Math.min(3,(new Date(hj)-new Date(primeira))/864e5/30));
   const conta=ls.filter(l=>!l.cartao_id&&!fixas.has(l.categoria_id)).reduce((s,l)=>s+Number(l.valor),0)/meses;
@@ -1007,7 +1012,7 @@ function modalDebito(){
   const hj=iso(new Date()), d0=new Date(); d0.setDate(d0.getDate()-90); const ini=iso(d0);
   const fixas=new Set(S.cats.filter(c=>/contas fixas|moradia/i.test(c.nome)).map(c=>c.id));
   const meses=Math.max(1,Math.min(3,(new Date(hj)-new Date(filtro(S.lanc,"user_id").filter(l=>l.data>=ini&&l.data<=hj).reduce((m,l)=>l.data<m?l.data:m,hj)))/864e5/30));
-  const base=filtro(S.lanc,"user_id").filter(l=>l.tipo==="despesa"&&!l.cartao_id&&l.data>=ini&&l.data<=hj&&!ehParcela(l)&&!fixas.has(l.categoria_id));
+  const base=filtro(S.lanc,"user_id").filter(l=>l.tipo==="despesa"&&!l.cartao_id&&l.data>=ini&&l.data<=hj&&!ehParcela(l)&&!fixas.has(l.categoria_id)&&!ehPagEmprestimo(l));
   const grupos={}; base.filter(l=>!ehInterno(l)).forEach(l=>{ const k=chaveDesc(l.descricao); (grupos[k]=grupos[k]||{k,desc:l.descricao,n:0,v:0}); grupos[k].n++; grupos[k].v+=Number(l.valor); });
   const lista=Object.values(grupos).sort((a,b)=>b.v-a.v), ign=(S.proj.ignorar||[]);
   const tot=lista.reduce((s,g)=>s+g.v,0)/meses;
@@ -1039,6 +1044,42 @@ function quebraHTML(s0, ms, alvo){
   if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
   linhas.push(`<div class="qrow tot"><span>${esc(alvo.label)} fecha em</span><span class="num ${alvo.saldo<0?"neg":""}">${brl(alvo.saldo)}</span></div>`);
   return `<details class="quebra" open><summary>De onde vem esse valor</summary>${linhas.join("")}</details>`;
+}
+
+/* ---------- SOBRA DO MÊS (entradas − saídas, no mês selecionado) ---------- */
+function calcSobra(){
+  const r=mesRef(), o=S.mes, hoje=new Date(); hoje.setHours(12,0,0,0); const hj=iso(hoje), hd=hoje.getDate();
+  const passado=o<0, atual=o===0, lim=passado?r.fim:(atual?hj:null);
+  const real=lim?filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=lim&&!ehInterno(l)):[];
+  const eR=real.filter(l=>l.tipo==="receita").reduce((s,l)=>s+Number(l.valor),0);
+  const sR=real.filter(l=>l.tipo==="despesa").reduce((s,l)=>s+Number(l.valor),0);
+  let eP=0,sP=0;
+  if(!passado){
+    const p=S.proj, ini=atual?hd+1:1, frac=Math.max(0,r.ult-ini+1)/r.ult;
+    let fator=1; for(let m=1;m<=o;m++){ const mm=new Date(hoje.getFullYear(),hoje.getMonth()+m,1).getMonth(); if(mm===Number(p.mesReajuste)) fator*=1+Number(p.reajuste)/100; }
+    const inf=Math.pow(1+Number(p.inflacao)/100,o/12);
+    filtro(S.rendas).forEach(x=>{ if(Math.min(x.dia,r.ult)>=ini) eP+=Number(x.valor)*(x.tipo==="salario"?fator:1);
+      if(x.recebe_13&&r.mes===11&&Math.min(20,r.ult)>=ini) eP+=Number(x.valor)*fator; });
+    filtro(S.despesas).forEach(x=>{ const d=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
+      if(d<ini) return; const idx=d>hd?o+1:o; if(R!==null&&idx>R) return; sP+=Number(x.valor)*inf; });
+    const e=divisaoVariavel(); sP+=(e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0))*inf*frac;
+    filtro(S.lanc,"user_id").filter(l=>l.data>hj&&l.data>=r.ini&&l.data<=r.fim&&!ehInterno(l)).forEach(l=>{ if(l.tipo==="receita") eP+=Number(l.valor); else sP+=Number(l.valor); });
+  }
+  return {r,passado,atual,eR,sR,eP,sP,E:eR+eP,S:sR+sP};
+}
+function secSobra(){
+  const x=calcSobra(), sobra=x.E-x.S, pct=x.E>0?Math.min(100,x.S/x.E*100):(x.S>0?100:0);
+  const det=(real,prev,a,b)=> x.passado?a:(x.atual?`${brl(real)} ${a} + ${brl(prev)} ${b}`:b);
+  return `<section class="panel">
+    <div class="sec-h"><h2>Sobra de ${x.r.nome}</h2><span class="pill">${x.passado?"mês fechado":x.atual?"realizado + previsto até o fim do mês":"previsão"}</span></div>
+    <div class="kpis">
+      <div><span class="label">Entradas</span><span class="v" style="color:var(--pos)">${brl(x.E)}</span><span class="muted" style="font-size:.78rem">${det(x.eR,x.eP,"recebido","a receber")}</span></div>
+      <div><span class="label">Saídas</span><span class="v" style="color:var(--neg)">${brl(x.S)}</span><span class="muted" style="font-size:.78rem">${det(x.sR,x.sP,"gasto","previsto")}</span></div>
+      <div><span class="label">Sobra</span><span class="v" style="color:${sobra<0?"var(--neg)":"var(--fg)"}">${brl(sobra)}</span><span class="muted" style="font-size:.78rem">${x.E>0?`${Math.round(sobra/x.E*100)}% das entradas`:"cadastre suas rendas"}</span></div>
+    </div>
+    <div class="bar" aria-hidden="true"><i class="${pct>=100?"over":pct>=85?"hot":""}" style="width:${pct.toFixed(1)}%"></i></div>
+    <p class="muted" style="margin:0;font-size:.78rem">Saídas = gastos na conta + compras no cartão no mês em que foram feitas. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora. <button class="link" data-tab="lanc">Ver lançamentos</button></p>
+  </section>`;
 }
 
 /* ---------- FATURAS DOS CARTÕES (mês selecionado no topo) ---------- */
@@ -1272,7 +1313,7 @@ function carregarScriptPluggy(){
     s.onload=ok; s.onerror=()=>{ const s2=document.createElement("script"); s2.src="https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js"; s2.onload=ok; s2.onerror=()=>ko(new Error("Não consegui carregar o Pluggy Connect.")); document.head.appendChild(s2); };
     document.head.appendChild(s); });
 }
-const resumoSync = res => (res||[]).map(r=>r.erro?`${r.banco}: ${r.erro}`:`${r.banco}: ${r.contas} contas, ${r.cartoes} cartões, ${r.transacoes} transações`).join(" · ");
+const resumoSync = res => (res||[]).map(r=>r.erro?`${r.banco}: ${r.erro}`:`${r.banco}: ${r.contas} contas, ${r.cartoes} cartões${r.emprestimos?`, ${r.emprestimos} empréstimos`:""}, ${r.transacoes} transações`).join(" · ");
 async function conectarBanco(){
   const err=$("#pl-err"); if(err) err.textContent="";
   try{
@@ -1299,7 +1340,7 @@ function secCadastros(){
   const rendas=S.rendas.map(x=>linhaCad("rendas",x,{ic:TIP[x.tipo]||"briefcase",bg:"background:var(--pos-soft);color:var(--pos)"},x.descricao,
     `${esc(nomeMembro(x.titular_id))} · dia ${x.dia}${x.recebe_13?" · 13º":""}${g(x.grupo_id)?" · "+esc(g(x.grupo_id).nome):""}`,brl(x.valor),"pos"));
   const desp=S.despesas.map(x=>linhaCad("despesas_fixas",x,{ic:c(x.categoria_id)?.icone||"calendar-days"},x.descricao,
-    `${esc(nomeMembro(x.titular_id))} · vence dia ${x.dia}${vazio(x.parcelas_restantes)?"":" · "+x.parcelas_restantes+" parcelas"}${g(x.grupo_id)?" · "+esc(g(x.grupo_id).nome):""}`,brl(x.valor),"neg"));
+    `${x.origem==="pluggy"?"Do banco (automático) · ":""}${esc(nomeMembro(x.titular_id))} · vence dia ${x.dia}${vazio(x.parcelas_restantes)?"":" · "+x.parcelas_restantes+" parcelas"}${x.saldo_devedor?" · saldo devedor "+brl(x.saldo_devedor):""}${g(x.grupo_id)?" · "+esc(g(x.grupo_id).nome):""}`,brl(x.valor),"neg"));
   const grupos=S.grupos.map(x=>linhaCad("grupos",x,{ic:x.icone,bg:`background:color-mix(in srgb,${esc(x.cor||"#64748b")} 16%,transparent);color:${esc(x.cor||"#64748b")}`},x.nome,"Grupo",null));
   const cats=S.cats.map(x=>linhaCad("categorias",x,{ic:x.icone},x.nome,"Categoria",null));
   const bancos=S.inst.map(x=>linhaCad("instituicoes",x,{t:ini(x.nome),bank:true,bg:`background:linear-gradient(135deg,${esc(x.cor1)},${esc(x.cor2)})`},x.nome,"Cor usada nos cartões e contas",null));
