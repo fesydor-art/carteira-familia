@@ -692,9 +692,10 @@ function render(){
       </section>`:""}
       ${S.tab==="geral" ? secSobra() : ""}
       ${S.tab==="geral" ? secFechamento() : ""}
+      ${S.tab==="geral" ? secMes() : ""}
       ${S.tab==="geral"||S.tab==="cartoes" ? secCartoes(cartoes) : ""}
       ${S.tab==="cartoes" ? secFaturas() : ""}
-      ${S.tab==="geral" ? `<div class="cols">${secMes()}${secLanc(8)}</div>${secContas(contas)}` : ""}
+      ${S.tab==="geral" ? `${secLanc(8)}${secContas(contas)}` : ""}
       ${S.tab==="contas" ? secContas(contas) : ""}
       ${S.tab==="lanc" ? secLanc(300) : ""}
       ${S.tab==="cad" ? secCadastros() : ""}
@@ -1252,7 +1253,7 @@ function desenharProj(){
 }
 let tSalvar;
 document.addEventListener("click",e=>{ const b=e.target.closest("[data-rec-pago]"); if(!b) return;
-  const k=b.dataset.recPago+"|"+b.dataset.mes; S.proj.pagos={...(S.proj.pagos||{})};
+  const k=b.dataset.recPago+"|"+b.dataset.rmes; S.proj.pagos={...(S.proj.pagos||{})};
   if(b.dataset.v==="1") S.proj.pagos[k]=true; else delete S.proj.pagos[k];
   salvarProj(); render(); toast(b.dataset.v==="1"?"Marcado como pago":"Voltou para a pagar"); });
 function salvarProj(){
@@ -1280,8 +1281,8 @@ const CAD={
   rendas:{titulo:"renda",campos:[["titular_id","Quem recebe","membro"],["descricao","Descrição","text"],["tipo","Tipo","sel",[["salario","Salário"],["aluguel","Aluguel"],["outros","Outros"]]],
     ["valor","Valor líquido por mês (R$)","money"],["dia","Dia em que cai","dia"],["recebe_13","Recebe 13º (em dezembro)","check"],["grupo_id","Perfil","grupo"]],
     padrao:()=>({titular_id:S.user.id,descricao:"Salário",tipo:"salario",dia:5,recebe_13:true,grupo_id:grupoPadrao()})},
-  despesas_fixas:{titulo:"gasto fixo",campos:[["titular_id","Responsável","membro"],["descricao","Descrição","text"],["valor","Valor por mês (R$)","money"],["dia","Dia do vencimento","dia"],
-    ["parcelas_restantes","Parcelas restantes (vazio = sem fim)","int"],["categoria_id","Categoria","cat"],["grupo_id","Perfil","grupo"]],
+  despesas_fixas:{titulo:"conta a pagar",campos:[["descricao","Descrição (ex.: Luz, Financiamento carro)","text"],["valor","Valor (R$)","money"],["dia","Dia do vencimento","dia"],
+    ["parcelas_restantes","Parcelas que faltam (vazio = todo mês, sem fim)","int"],["titular_id","Responsável","membro"],["categoria_id","Categoria","cat"],["grupo_id","Perfil","grupo"]],
     padrao:()=>({titular_id:S.user.id,dia:10,grupo_id:grupoPadrao()})},
   grupos:{titulo:"perfil",campos:[["nome","Nome","text"],["cor","Cor","color"],["privado","Só eu vejo este perfil (privado): contas, cartões e lançamentos dele ficam invisíveis para os outros","check"],["icone","Ícone","icone"]],padrao:()=>({icone:"folder",cor:"#6366f1",privado:false})},
   categorias:{titulo:"categoria",campos:[["nome","Nome","text"],["icone","Ícone","icone"]],padrao:()=>({icone:"tag"})},
@@ -1400,7 +1401,7 @@ function secCadastros(){
     ${secAjustes()}
     ${secConexoes()}
     ${painelCad("rendas","Rendas e salários",rendas,`<div style="display:flex;flex-direction:column;gap:4px">${totPor(S.rendas)}</div>`,"Cadastre o salário líquido de cada um e outras rendas, como aluguéis.")}
-    ${painelCad("despesas_fixas","Gastos fixos",desp,`<div style="display:flex;flex-direction:column;gap:4px">${totPor(S.despesas)}</div>`,"Aluguel, financiamento, escola, internet, parcelas…")}
+    ${painelCad("despesas_fixas","Contas a pagar (todo mês)",desp,`<div style="display:flex;flex-direction:column;gap:4px">${totPor(S.despesas)}</div>`,"Aluguel, financiamento, escola, internet, parcelas…")}
     ${painelCad("categorias","Categorias",cats,"","Nenhuma categoria.")}
     ${painelCad("instituicoes","Bancos",bancos,"","Nenhum banco.")}
   </div>`;
@@ -1458,7 +1459,7 @@ function secMes(){
   const rec=itens.filter(i=>i.tipo==="receita"&&!i.info).reduce((s,i)=>s+i.valor,0), pag=itens.filter(i=>i.tipo==="despesa"&&!i.info).reduce((s,i)=>s+i.valor,0);
   const passado=S.mes<0;
   return `<section class="panel">
-    <div class="sec-h"><h2>Contas de ${r.nome}</h2><button class="btn ghost sm" data-tab="cad">${ic("settings","ico",14)} Cadastros</button></div>
+    <div class="sec-h"><h2>Contas a pagar · ${r.nome}</h2><button class="btn sm" data-cad="despesas_fixas">${ic("plus","ico",14)} Nova conta</button></div>
     ${passado?`<div class="empty">Mês encerrado. Veja o que aconteceu em “Lançamentos de ${r.nome}”.</div>`:`
     <div class="kpis">
       <div><span class="label">A receber</span><span class="v" style="color:var(--pos);font-size:1.05rem">${brl(rec)}</span></div>
@@ -1469,8 +1470,8 @@ function secMes(){
       <div class="item${i.st==="passou"?" passou":""}">
         <div class="dot date"><b>${i.dia}</b><small>${r.curto}</small></div>
         <div><div class="t"><span class="ti">${ic(i.icone,"ico",15)}</span>${esc(i.desc)}</div><div class="m">${esc(i.meta)}</div></div>
-        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-mes="${i.recMes}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"marcar pago"}</button>`:""}</div>
-      </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nada previsto. Cadastre salários e gastos fixos em Cadastros.</div>`}</div>`}
+        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-rmes="${i.recMes}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"marcar pago"}</button> <button class="link" style="font-size:.75rem" data-cad-edit="despesas_fixas" data-id="${esc(i.rec)}">editar</button>`:""}</div>
+      </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nenhuma conta cadastrada. Clique em <b>Nova conta</b> (luz, água, financiamento, empréstimo…).</div>`}</div>`}
   </section>`;
 }
 
