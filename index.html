@@ -677,7 +677,7 @@ function render(){
         <button class="chip" data-p="todos" aria-pressed="${S.pessoa==="todos"}">${ic("layers","ico",15)} Todos</button>
         ${S.membros.map(m=>`<button class="chip" data-p="p:${m.user_id}" aria-pressed="${S.pessoa==="p:"+m.user_id}">${avatarHTML(m,18)} ${esc(m.nome)}</button>`).join("")}
         ${S.grupos.length?`<span class="sep" aria-hidden="true"></span>`:""}
-        ${S.grupos.map(g=>`<button class="chip" data-p="g:${g.id}" aria-pressed="${S.pessoa==="g:"+g.id}"><span style="color:${esc(g.cor||"currentColor")};display:inline-flex">${ic(g.icone,"ico",15)}</span> ${esc(g.nome)}</button>`).join("")}
+        ${S.grupos.map(g=>`<button class="chip" data-p="g:${g.id}" aria-pressed="${S.pessoa==="g:"+g.id}"><span style="color:${esc(g.cor||"currentColor")};display:inline-flex">${ic(g.icone,"ico",15)}</span> ${esc(g.nome)}${g.privado?` <span title="Privado: só você vê" style="display:inline-flex;opacity:.7">${ic("lock","ico",12)}</span>`:""}</button>`).join("")}
       </div>
       ${resumo?`<section class="summary" aria-label="Resumo">
         <div class="tot"><span class="hd">${ic("wallet","ico",15)}<span class="label">Saldo total</span></span><span class="v">${brlV(disp+invest)}</span><span class="s">disponível + investido</span></div>
@@ -806,7 +806,7 @@ function secAjustes(){
         nc=S.contas.filter(x=>x.grupo_id===g.id).length+S.cartoes.filter(x=>x.grupo_id===g.id).length;
       const n=[pl(nr,"renda","rendas"),pl(nd,"gasto fixo","gastos fixos"),pl(nc,"conta/cartão","contas/cartões")].join(" · ");
       return `<div class="item"><div class="dot" style="background:color-mix(in srgb,${esc(g.cor||"#64748b")} 16%,transparent);color:${esc(g.cor||"#64748b")}">${ic(g.icone)}</div>
-      <div><div class="t">${esc(g.nome)}</div><div class="m">${n}</div></div>
+      <div><div class="t">${esc(g.nome)}${g.privado?` <span class="pill">${ic("lock","ico",11)} privado · só você vê</span>`:""}</div><div class="m">${n}</div></div>
       <div class="r"><button class="iconbtn sm" data-cad-edit="grupos" data-id="${g.id}" aria-label="Editar ${esc(g.nome)}" title="Editar">${ic("pencil","ico",14)}</button></div></div>`; }).join("")||`<div class="empty">${ic("circle-plus")} Nenhum perfil. Crie “Casal” e “Aluguéis”.</div>`}</div>
     <div class="label" style="margin-top:8px">Convidar pessoa</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="invite">${esc(S.fam.codigo_convite)}</span><button class="btn ghost sm" id="copiar">${ic("copy","ico",14)} Copiar</button></div>
@@ -864,6 +864,7 @@ function mediaVariavel(){ const e=estimativas(); return e.conta+Object.values(e.
 const vazio=v=>v===null||v===undefined||v==="";
 /* valor digitado na Projeção vale para "Todos" (reparte entre conta e cartões); com filtro usa a média real do filtro */
 function divisaoVariavel(){
+  if(S.proj && S.proj.semMedia) return {conta:0,cartao:{}};   // modo "só contas reais": sem estimativa de gastos do dia a dia
   const e=estimativas(); if(vazio(S.proj.variavel)||S.pessoa!=="todos") return e;
   const alvo=Number(S.proj.variavel), tot=e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0);
   if(tot<=0) return {conta:alvo,cartao:{}};
@@ -1005,6 +1006,7 @@ function desenharFech(){
     <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (atual + compras previstas + parcelas) e ${brl(divisaoVariavel().conta)}/mês de gastos no débito/Pix. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
   el.querySelectorAll("[data-ver-debito]").forEach(b=>b.onclick=modalDebito);
+  el.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.proj.semMedia=b.dataset.modo==="reais"; salvarProj(); render(); });
   el.querySelectorAll("[data-ver-fatura]").forEach(b=>b.onclick=()=>{S.tab="cartoes";S.mes=Number(b.dataset.verFatura);render();setTimeout(()=>{const f=$("#faturas"); if(f) f.scrollIntoView({behavior:"smooth"});},50);});
 }
 /* o que compõe a média de débito/Pix — e marcar o que não é gasto */
@@ -1036,14 +1038,19 @@ function quebraHTML(s0, ms, alvo){
   const linhas=[`<div class="qrow"><span>Disponível hoje</span><span class="num">${brl(s0)}</span></div>`];
   if(soma("rendas")) linhas.push(linha("Salários e rendas",soma("rendas")));
   if(soma("futRec")) linhas.push(linha("Entradas já lançadas",soma("futRec")));
-  Object.entries(fat).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
+  Object.entries(fat).filter(([,v])=>v>0.005).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
     linhas.push(`<div class="qrow"><span>Fatura ${esc(c.instituicao||"")} · ${esc(c.nome||"cartão")} <button class="link" data-ver-fatura="${mesDe[id]}">ver itens</button></span><span class="num neg">− ${brl(v)}</span></div>`); });
   if(soma("fixos")) linhas.push(linha("Gastos fixos (Cadastros)",-soma("fixos")));
-  if(soma("debito")) linhas.push(`<div class="qrow"><span>Débito/Pix do dia a dia (média) <button class="link" data-ver-debito>ver o que entra</button></span><span class="num neg">− ${brl(soma("debito"))}</span></div>`);
+  if(soma("debito")) linhas.push(`<div class="qrow"><span>Estimativa de gastos no débito/Pix (você ainda não gastou) <button class="link" data-ver-debito>como calculo</button></span><span class="num neg">− ${brl(soma("debito"))}</span></div>`);
   if(soma("futDesp")) linhas.push(linha("Saídas já lançadas na conta",-soma("futDesp")));
   if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
   linhas.push(`<div class="qrow tot"><span>${esc(alvo.label)} fecha em</span><span class="num ${alvo.saldo<0?"neg":""}">${brl(alvo.saldo)}</span></div>`);
-  return `<details class="quebra" open><summary>De onde vem esse valor</summary>${linhas.join("")}</details>`;
+  const sem=!!(S.proj&&S.proj.semMedia);
+  const modo=`<div class="seg" role="group" aria-label="O que considerar" style="margin:4px 0 8px">
+    <button type="button" data-modo="reais" aria-pressed="${sem}">Só contas a pagar</button>
+    <button type="button" data-modo="media" aria-pressed="${!sem}">Contas + gasto do dia a dia</button></div>
+    <p class="muted" style="margin:0 0 6px;font-size:.78rem">${sem?"Mostrando só o que já está registrado: faturas no banco, parcelas, gastos fixos e rendas. Gastos que você ainda vai fazer não entram.":"Inclui uma estimativa do que você costuma gastar no débito/Pix e no cartão (média dos últimos 3 meses), mesmo que ainda não tenha gasto."}</p>`;
+  return `<details class="quebra" open><summary>De onde vem esse valor</summary>${modo}${linhas.join("")}</details>`;
 }
 
 /* ---------- SOBRA DO MÊS (entradas − saídas, no mês selecionado) ---------- */
@@ -1233,7 +1240,7 @@ const CAD={
   despesas_fixas:{titulo:"gasto fixo",campos:[["titular_id","Responsável","membro"],["descricao","Descrição","text"],["valor","Valor por mês (R$)","money"],["dia","Dia do vencimento","dia"],
     ["parcelas_restantes","Parcelas restantes (vazio = sem fim)","int"],["categoria_id","Categoria","cat"],["grupo_id","Perfil","grupo"]],
     padrao:()=>({titular_id:S.user.id,dia:10,grupo_id:grupoPadrao()})},
-  grupos:{titulo:"perfil",campos:[["nome","Nome","text"],["cor","Cor","color"],["icone","Ícone","icone"]],padrao:()=>({icone:"folder",cor:"#6366f1"})},
+  grupos:{titulo:"perfil",campos:[["nome","Nome","text"],["cor","Cor","color"],["privado","Só eu vejo este perfil (privado): contas, cartões e lançamentos dele ficam invisíveis para os outros","check"],["icone","Ícone","icone"]],padrao:()=>({icone:"folder",cor:"#6366f1",privado:false})},
   categorias:{titulo:"categoria",campos:[["nome","Nome","text"],["icone","Ícone","icone"]],padrao:()=>({icone:"tag"})},
   instituicoes:{titulo:"banco",campos:[["nome","Nome","text"],["cor1","Cor principal","color"],["cor2","Cor secundária","color"]],padrao:()=>({cor1:"#334155",cor2:"#0f172a"})}
 };
@@ -1269,7 +1276,9 @@ function modalCad(tab,row){
       cfg.campos.forEach(([k,,t])=>{ if(t==="icone"){ o[k]=(document.querySelector('input[name="f-icone"]:checked')||{}).value||"tag"; return; } const el=$("#f-"+k);
         o[k] = t==="check" ? el.checked : (t==="money"||t==="dia") ? Number(el.value) : t==="int" ? (el.value===""?null:Number(el.value))
              : (/_id$/.test(k) && el.value==="") ? null : el.value.trim(); });
+      if(tab==="grupos" && o.privado) o.dono_id=(row&&row.dono_id)||S.user.id;
       const r= ed? await sb.from(tab).update(o).eq("id",row.id) : await sb.from(tab).insert(o);
+      if(r.error && /privado|dono_id/.test(r.error.message)) return $("#cad-err").textContent="Para usar perfil privado, rode antes o SQL 2026-10-14_perfil_privado.sql no Supabase.";
       if(r.error) return $("#cad-err").textContent= /duplicate|unique/i.test(r.error.message)?"Já existe um item com esse nome.":r.error.message;
       fechar(); await carregar(); render(); toast(ed?"Atualizado":"Cadastrado"); };
   });
@@ -1468,6 +1477,8 @@ function modalConta(c){
         const row={familia_id:S.fam.id,nome:$("#c-nome").value.trim(),tipo:$("#c-tipo").value,titular_id:$("#c-tit").value,
           instituicao_id:$("#c-inst").value||null,saldo_inicial:Number($("#c-saldo").value||0)};
         if(S.grupoOK) row.grupo_id=$("#c-grp").value||null;
+        // mudou o perfil da conta: os lançamentos dela vão junto (antes, para continuarem visíveis a quem pode ver)
+        if(ed && S.grupoOK && row.grupo_id!==c.grupo_id){ const rl=await sb.from("lancamentos").update({grupo_id:row.grupo_id}).eq("conta_id",c.id); if(rl.error) return $("#c-err").textContent=rl.error.message; }
         const r= ed? await sb.from("contas").update(row).eq("id",c.id) : await sb.from("contas").insert(row);
         if(r.error) return $("#c-err").textContent=r.error.message;
         fechar(); await carregar(); render(); toast(ed?"Conta atualizada":"Conta criada");};
@@ -1519,6 +1530,7 @@ function modalCartao(c){
           final4:$("#k-f4").value||null,titular_id:$("#k-tit").value,limite_total:Number($("#k-lim").value||0),
           fatura_atual:Number($("#k-fat").value||0),dia_fechamento:n($("#k-fec").value),dia_vencimento:n($("#k-ven").value)};
         if(S.grupoOK) row.grupo_id=$("#k-grp").value||null;
+        if(ed && S.grupoOK && row.grupo_id!==c.grupo_id){ const rl=await sb.from("lancamentos").update({grupo_id:row.grupo_id}).eq("cartao_id",c.id); if(rl.error) return $("#k-err").textContent=rl.error.message; }
         const r= ed? await sb.from("cartoes").update(row).eq("id",c.id) : await sb.from("cartoes").insert(row);
         if(r.error) return $("#k-err").textContent=r.error.message;
         fechar(); await carregar(); render(); toast(ed?"Cartão atualizado":"Cartão adicionado");};
