@@ -294,6 +294,17 @@ table.tb{border-collapse:collapse;width:100%;font-size:.84rem}
 .tb th:first-child,.tb td:first-child{text-align:left}
 .tb th{color:var(--muted);font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em}
 .tb tbody tr:hover{background:var(--surface-2)}
+.quebra{border-top:1px solid var(--line);padding-top:10px}
+.quebra summary{cursor:pointer;font-weight:600;font-size:.88rem;margin-bottom:6px}
+.qrow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:.86rem;border-bottom:1px dashed var(--line)}
+.qrow .num.neg{color:var(--neg)}.qrow .num.pos{color:var(--pos)}
+.qrow.tot{border-bottom:0;font-weight:700;font-size:.95rem;padding-top:10px}
+.fat{border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:var(--surface)}
+.fat-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.fat-h .t{font-weight:600}.fat-h .m{font-size:.8rem;color:var(--muted)}
+.fat-comp{display:flex;gap:18px;flex-wrap:wrap}
+.fat-comp>div{display:flex;flex-direction:column;gap:2px}
+.fat details summary{cursor:pointer;font-size:.85rem;font-weight:600;color:var(--accent)}
 .cadgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
 @media (max-width:980px){.cadgrid{grid-template-columns:1fr}}
 .cadgrid>.panel{max-width:none!important}
@@ -677,6 +688,7 @@ function render(){
       </section>`:""}
       ${S.tab==="geral" ? secFechamento() : ""}
       ${S.tab==="geral"||S.tab==="cartoes" ? secCartoes(cartoes) : ""}
+      ${S.tab==="cartoes" ? secFaturas() : ""}
       ${S.tab==="geral" ? `<div class="cols">${secMes()}${secLanc(8)}</div>${secContas(contas)}` : ""}
       ${S.tab==="contas" ? secContas(contas) : ""}
       ${S.tab==="lanc" ? secLanc(300) : ""}
@@ -744,7 +756,7 @@ function cardHTML(c){
 }
 function secCartoes(cartoes){
   return `<section style="display:flex;flex-direction:column;gap:10px">
-    <div class="sec-h"><h2>Cartões</h2><span class="meta num">${cartoes.length} ${cartoes.length===1?"ativo":"ativos"}</span></div>
+    <div class="sec-h"><h2>Cartões</h2><span style="display:flex;gap:12px;align-items:center"><span class="meta num">${cartoes.length} ${cartoes.length===1?"ativo":"ativos"}</span>${S.tab==="geral"&&cartoes.length?`<button class="btn ghost sm" data-tab="cartoes">${ic("receipt-text","ico",14)} Ver faturas</button>`:""}</span></div>
     <div class="rail">${cartoes.map(cardHTML).join("")}
       <div class="cwrap"><div class="ccard add" data-add="cartao" role="button" tabindex="0">${ic("plus","ico",22)}<span>Adicionar cartão</span></div></div>
     </div></section>`;
@@ -898,20 +910,20 @@ function motor(nMeses, sim){
     const y=hoje.getFullYear(), mo=hoje.getMonth()+m, first=new Date(y,mo,1,12), mes=first.getMonth(), last=new Date(y,mo+1,0,12).getDate();
     if(m>0 && mes===Number(p.mesReajuste)) fator*=1+Number(p.reajuste)/100;
     const inf=Math.pow(1+Number(p.inflacao)/100, m/12), start=m===0?hd+1:1, vDia=varConta*inf*aj/last;
-    let rec=0,gas=0;
+    let rec=0,gas=0; const comp={rendas:0,fixos:0,faturas:{},debito:0,futRec:0,futDesp:0,extra:0};
     for(let day=start; day<=last; day++){
       let r=0,g=0;
-      rendas.forEach(x=>{ if(Math.min(x.dia,last)===day) r+=Number(x.valor)*(x.tipo==="salario"?fator:1);
-        if(x.recebe_13 && mes===11 && day===Math.min(20,last)) r+=Number(x.valor)*fator; });
-      desp.forEach(x=>{ if(Math.min(x.dia,last)===day && x.rest>0){ g+=Number(x.valor)*inf*aj; x.rest--; } });
-      cartoes.forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const dd=Math.max(start,Math.min(Number(c.dia_vencimento)||last,last)); if(day===dd) g+=f.valor; });
-      (futuros[iso(new Date(y,mo,day,12))]||[]).forEach(l=>{ if(l.tipo==="receita") r+=Number(l.valor); else g+=Number(l.valor); });
-      if(sim && sim.extraValor>0 && m===Number(sim.extraMes) && day===Math.max(start,Math.min(15,last))) g+=Number(sim.extraValor);
-      const ev=r>0||g>0; g+=vDia;
+      rendas.forEach(x=>{ let v=0; if(Math.min(x.dia,last)===day) v+=Number(x.valor)*(x.tipo==="salario"?fator:1);
+        if(x.recebe_13 && mes===11 && day===Math.min(20,last)) v+=Number(x.valor)*fator; r+=v; comp.rendas+=v; });
+      desp.forEach(x=>{ if(Math.min(x.dia,last)===day && x.rest>0){ const v=Number(x.valor)*inf*aj; g+=v; comp.fixos+=v; x.rest--; } });
+      cartoes.forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const dd=Math.max(start,Math.min(Number(c.dia_vencimento)||last,last)); if(day===dd){ g+=f.valor; comp.faturas[c.id]=(comp.faturas[c.id]||0)+f.valor; } });
+      (futuros[iso(new Date(y,mo,day,12))]||[]).forEach(l=>{ if(l.tipo==="receita"){ r+=Number(l.valor); comp.futRec+=Number(l.valor); } else { g+=Number(l.valor); comp.futDesp+=Number(l.valor); } });
+      if(sim && sim.extraValor>0 && m===Number(sim.extraMes) && day===Math.max(start,Math.min(15,last))){ g+=Number(sim.extraValor); comp.extra+=Number(sim.extraValor); }
+      const ev=r>0||g>0; g+=vDia; comp.debito+=vDia;
       saldo+=r-g; rec+=r; gas+=g;
       dias.push({d:new Date(y,mo,day,12), saldo, ev});
     }
-    meses.push({label:MESES[mes]+"/"+String(first.getFullYear()).slice(2), rec, gas, sobra:rec-gas, saldo, m});
+    meses.push({label:MESES[mes]+"/"+String(first.getFullYear()).slice(2), rec, gas, sobra:rec-gas, saldo, m, comp});
   }
   return {s0, dias, meses};
 }
@@ -981,8 +993,74 @@ function desenharFech(){
       <div><span class="label">Entra / sai ${k>=3?"no período":"no mês"}</span><span class="v"><span style="color:var(--pos)">+${abrev(ent).replace("R$ ","")}</span> <span class="muted" style="font-weight:500">/</span> <span style="color:var(--neg)">−${abrev(sai).replace("R$ ","").replace("−","")}</span></span></div>
     </div>
     ${k>=3 ? mensalSVG(ms,W) : diarioSVG(r.dias,W)}
+    ${quebraHTML(r.s0, k>=3?ms:(k===1?ms.slice(0,2):ms.slice(0,1)), alvo)}
     <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (atual + compras previstas + parcelas) e ${brl(divisaoVariavel().conta)}/mês de gastos no débito/Pix. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
+  el.querySelectorAll("[data-ver-fatura]").forEach(b=>b.onclick=()=>{S.tab="cartoes";S.mes=Number(b.dataset.verFatura);render();setTimeout(()=>{const f=$("#faturas"); if(f) f.scrollIntoView({behavior:"smooth"});},50);});
+}
+/* de onde vem o saldo final: soma dos componentes dos meses do período */
+function quebraHTML(s0, ms, alvo){
+  const soma=k=>ms.reduce((s,m)=>s+((m.comp&&m.comp[k])||0),0), fat={}, mesDe={};
+  ms.forEach(m=>Object.entries((m.comp&&m.comp.faturas)||{}).forEach(([id,v])=>{ fat[id]=(fat[id]||0)+v; if(mesDe[id]===undefined) mesDe[id]=m.m; }));
+  const linha=(rot,v)=>`<div class="qrow"><span>${rot}</span><span class="num ${v<0?"neg":v>0?"pos":""}">${v>0?"+":v<0?"−":""} ${brl(Math.abs(v))}</span></div>`;
+  const linhas=[`<div class="qrow"><span>Disponível hoje</span><span class="num">${brl(s0)}</span></div>`];
+  if(soma("rendas")) linhas.push(linha("Salários e rendas",soma("rendas")));
+  if(soma("futRec")) linhas.push(linha("Entradas já lançadas",soma("futRec")));
+  Object.entries(fat).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
+    linhas.push(`<div class="qrow"><span>Fatura ${esc(c.instituicao||"")} · ${esc(c.nome||"cartão")} <button class="link" data-ver-fatura="${mesDe[id]}">ver itens</button></span><span class="num neg">− ${brl(v)}</span></div>`); });
+  if(soma("fixos")) linhas.push(linha("Gastos fixos (Cadastros)",-soma("fixos")));
+  if(soma("debito")) linhas.push(linha("Débito/Pix do dia a dia (média)",-soma("debito")));
+  if(soma("futDesp")) linhas.push(linha("Saídas já lançadas na conta",-soma("futDesp")));
+  if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
+  linhas.push(`<div class="qrow tot"><span>${esc(alvo.label)} fecha em</span><span class="num ${alvo.saldo<0?"neg":""}">${brl(alvo.saldo)}</span></div>`);
+  return `<details class="quebra" open><summary>De onde vem esse valor</summary>${linhas.join("")}</details>`;
+}
+
+/* ---------- FATURAS DOS CARTÕES (mês selecionado no topo) ---------- */
+function cicloAtual(c){
+  const hoje=new Date(); hoje.setHours(12,0,0,0); const fech=diaFech(c);
+  if(!fech) return null;
+  let prox=new Date(hoje.getFullYear(),hoje.getMonth(),fech,12); if(prox<=hoje) prox=new Date(hoje.getFullYear(),hoje.getMonth()+1,fech,12);
+  const ant=new Date(prox.getFullYear(),prox.getMonth()-1,fech,12);
+  return {ini:iso(new Date(ant.getTime()+864e5)), fim:iso(prox)};
+}
+function secFaturas(){
+  const o=Math.max(0,S.mes), r=mesRef(o), cartoes=filtro(S.cartoes), hoje=new Date(); hoje.setHours(12,0,0,0);
+  const hj=iso(hoje), fat=faturasPrevistas(o+1);
+  if(!cartoes.length) return "";
+  const blocos=cartoes.map(c=>{
+    const f=fat[c.id]&&fat[c.id][o], md=mesFaturaAtual(c,hoje.getDate()), dv=Math.min(Number(c.dia_vencimento)||r.ult,r.ult);
+    const venc=`${dv} ${r.curto}`;
+    if(!f||f.valor<=0) return `<div class="fat"><div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)}</div><div class="m">Nada previsto para vencer em ${r.nome}${o<md?" (a fatura deste mês já venceu)":""}</div></div><div class="amt">${brl(0)}</div></div></div>`;
+    let itens=[], titulo, nota;
+    if(o===md){
+      const ci=cicloAtual(c), lim=iso(new Date(hoje.getTime()-35*864e5));
+      itens=S.lanc.filter(l=>l.cartao_id===c.id&&!ehInterno(l)&&(ci?(l.data>=ci.ini&&l.data<=hj):(l.data<=hj&&l.data>lim)));
+      titulo="Fatura aberta"; nota=ci?`Fecha em ${dt(ci.fim)} · vence ${venc}`:`Vence ${venc}`;
+    } else { titulo="Fatura prevista"; nota=`Vence ${venc}`; }
+    const parcelas=S.lanc.filter(l=>l.cartao_id===c.id&&l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)&&Math.max(md,mesPagamento(c,l.data,hoje))===o);
+    const somaItens=itens.reduce((s,l)=>s+(l.tipo==="despesa"?1:-1)*Number(l.valor),0);
+    const linhaL=l=>`<div class="item"><div class="dot">${ic((S.cats.find(x=>x.id===l.categoria_id)||{}).icone||"tag")}</div>
+      <div><div class="t">${esc(l.descricao)}</div><div class="m">${dt(l.data)}${parcTxt(l)?" · parcela "+parcTxt(l).replace("/"," de "):""}</div></div>
+      <div class="r"><div class="amt ${l.tipo==="receita"?"pos":"neg"}">${l.tipo==="receita"?"+":"−"} ${brl(l.valor)}</div></div></div>`;
+    return `<div class="fat">
+      <div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)} <span class="pill ${o===md?"auto":""}">${titulo}</span></div><div class="m">${nota} · ${esc(nomeMembro(c.titular_id))}</div></div>
+        <div class="amt neg" style="font-size:1.15rem">${brl(f.valor)}</div></div>
+      <div class="fat-comp">
+        ${f.atual?`<div><span class="label">No banco hoje</span><b class="num">${brl(f.atual)}</b></div>`:""}
+        ${f.parcelas?`<div><span class="label">Parcelas</span><b class="num">${brl(f.parcelas)}</b></div>`:""}
+        ${f.estimado?`<div><span class="label">Compras previstas</span><b class="num">~${brl(f.estimado)}</b></div>`:""}
+      </div>
+      ${itens.length?`<details><summary>${itens.length} compras desta fatura · soma ${brl(somaItens)}</summary><div class="list">${itens.sort((a,b)=>b.data.localeCompare(a.data)).map(linhaL).join("")}</div></details>`:""}
+      ${parcelas.length?`<details><summary>${parcelas.length} parcelas que caem nesta fatura · ${brl(parcelas.reduce((s,l)=>s+Number(l.valor),0))}</summary><div class="list">${parcelas.map(linhaL).join("")}</div></details>`:""}
+      ${f.estimado?`<p class="muted" style="margin:0;font-size:.78rem">"Compras previstas" é a sua média de compras no cartão (sem parcelas) até a fatura fechar. Ajuste em Projeção → Gasto do dia a dia.</p>`:""}
+    </div>`;
+  }).join("");
+  const total=cartoes.reduce((s,c)=>s+((fat[c.id]&&fat[c.id][o])?fat[c.id][o].valor:0),0);
+  return `<section class="panel" id="faturas">
+    <div class="sec-h"><h2>Faturas que vencem em ${r.nome}</h2><span class="amt neg">${brl(total)}</span></div>
+    <p class="muted" style="margin:0;font-size:.82rem">Troque o mês no topo para ver as próximas faturas e as parcelas de cada uma.</p>
+    ${blocos}</section>`;
 }
 
 /* aba Projeção */
