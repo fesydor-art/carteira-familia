@@ -871,7 +871,11 @@ function recorrentesDetectados(){
   });
   return S._rec=out;
 }
-const despesasTodas=()=>S.despesas.concat(recorrentesDetectados());
+// contas do mês = só o que você cadastra em Gastos fixos (a detecção automática ficou desligada)
+const despesasTodas=()=>S.despesas;
+/* contas marcadas como pagas: S.proj.pagos["<id>|AAAA-MM"]=true */
+const mesKeyOff=o=>{ const h=new Date(); return iso(new Date(h.getFullYear(),h.getMonth()+o,1,12)).slice(0,7); };
+const pagoEm=(id,mk)=>!!((S.proj&&S.proj.pagos)||{})[id+"|"+mk];
 
 const ehParcela=l=>l.parcela_total>1 || /\(\d+\/\d+\)\s*$/.test(l.descricao||"");
 
@@ -957,9 +961,11 @@ function motor(nMeses, sim){
       let r=0,g=0;
       rendas.forEach(x=>{ let v=0; if(Math.min(x.dia,last)===day) v+=Number(x.valor)*(x.tipo==="salario"?fator:1);
         if(x.recebe_13 && mes===11 && day===Math.min(20,last)) v+=Number(x.valor)*fator; r+=v; comp.rendas+=v; });
-      desp.forEach(x=>{ if(m===0 && x.auto && x.pagoMes0) return;   // já pago este mês
-        const dx = (m===0 && x.auto && x.dia<=hd) ? Math.min(hd+1,last) : Math.min(x.dia,last);   // ainda não pago e o dia já passou: conta como a pagar
-        if(dx===day && x.rest>0){ const v=Number(x.valor)*inf*aj; g+=v; comp.fixos+=v; x.rest--; } });
+      desp.forEach(x=>{
+        const dx = (m===0 && x.dia<=hd) ? Math.min(hd+1,last) : Math.min(x.dia,last);   // não marcada como paga e o dia já passou: ainda sai
+        if(dx!==day) return;
+        if(pagoEm(x.id, iso(first).slice(0,7))){ if(m>0) x.rest--; return; }            // marcada como paga: já saiu do saldo
+        if(x.rest>0){ const v=Number(x.valor)*inf*aj; g+=v; comp.fixos+=v; x.rest--; } });
       cartoes.forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const dd=Math.max(start,Math.min(Number(c.dia_vencimento)||last,last)); if(day===dd){ g+=f.valor; comp.faturas[c.id]=(comp.faturas[c.id]||0)+f.valor; } });
       (futuros[iso(new Date(y,mo,day,12))]||[]).forEach(l=>{ if(l.tipo==="receita"){ r+=Number(l.valor); comp.futRec+=Number(l.valor); } else { g+=Number(l.valor); comp.futDesp+=Number(l.valor); } });
       if(sim && sim.extraValor>0 && m===Number(sim.extraMes) && day===Math.max(start,Math.min(15,last))){ g+=Number(sim.extraValor); comp.extra+=Number(sim.extraValor); }
@@ -1038,7 +1044,7 @@ function desenharFech(){
     </div>
     ${k>=3 ? mensalSVG(ms,W) : diarioSVG(r.dias,W)}
     ${quebraHTML(r.s0, k>=3?ms:(k===1?ms.slice(0,2):ms.slice(0,1)), alvo)}
-    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (fatura do banco + parcelas)${divisaoVariavel().conta?` e ${brl(divisaoVariavel().conta)}/mês de gasto do dia a dia que você digitou`:""}. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
+    <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e contas do mês que você cadastrou (as marcadas como pagas ficam de fora), faturas dos cartões no vencimento (fatura do banco + parcelas)${divisaoVariavel().conta?` e ${brl(divisaoVariavel().conta)}/mês de gasto do dia a dia que você digitou`:""}. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
   el.querySelectorAll("[data-ver-debito]").forEach(b=>b.onclick=modalDebito);
   el.querySelectorAll("[data-modo]").forEach(b=>b.onclick=()=>{ S.proj.semMedia=b.dataset.modo==="reais"; salvarProj(); render(); });
@@ -1075,7 +1081,7 @@ function quebraHTML(s0, ms, alvo){
   if(soma("futRec")) linhas.push(linha("Entradas já lançadas",soma("futRec")));
   Object.entries(fat).filter(([,v])=>v>0.005).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
     linhas.push(`<div class="qrow"><span>Fatura ${esc(c.instituicao||"")} · ${esc(c.nome||"cartão")} <button class="link" data-ver-fatura="${mesDe[id]}">ver itens</button></span><span class="num neg">− ${brl(v)}</span></div>`); });
-  if(soma("fixos")) linhas.push(linha("Gastos fixos (Cadastros)",-soma("fixos")));
+  if(soma("fixos")) linhas.push(linha("Contas do mês a pagar (não marcadas como pagas)",-soma("fixos")));
   if(soma("debito")) linhas.push(linha("Gasto do dia a dia (valor que você digitou na Projeção)",-soma("debito")));
   if(soma("futDesp")) linhas.push(linha("Saídas já lançadas na conta",-soma("futDesp")));
   if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
@@ -1099,7 +1105,8 @@ function calcSobra(){
     filtro(S.rendas).forEach(x=>{ if(Math.min(x.dia,r.ult)>=ini) eP+=Number(x.valor)*(x.tipo==="salario"?fator:1);
       if(x.recebe_13&&r.mes===11&&Math.min(20,r.ult)>=ini) eP+=Number(x.valor)*fator; });
     filtro(despesasTodas()).forEach(x=>{ const d=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
-      if(x.auto && atual){ if(!x.pagoMes0) sP+=Number(x.valor); return; }
+      if(pagoEm(x.id, mesKeyOff(o))) return;
+      if(atual && d<ini){ sP+=Number(x.valor); return; }   // venceu e não está marcada como paga
       if(d<ini) return; const idx=d>hd?o+1:o; if(R!==null&&idx>R) return; sP+=Number(x.valor)*inf; });
     const e=divisaoVariavel(); sP+=(e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0))*inf*frac;
     filtro(S.lanc,"user_id").filter(l=>l.data>hj&&l.data>=r.ini&&l.data<=r.fim&&!ehInterno(l)).forEach(l=>{ if(l.tipo==="receita") eP+=Number(l.valor); else sP+=Number(l.valor); });
@@ -1245,9 +1252,9 @@ function desenharProj(){
 }
 let tSalvar;
 document.addEventListener("click",e=>{ const b=e.target.closest("[data-rec-pago]"); if(!b) return;
-  const mes=iso(new Date()).slice(0,7); S.proj.pagos={...(S.proj.pagos||{})};
-  if(b.dataset.v==="1") S.proj.pagos[b.dataset.recPago]=mes; else delete S.proj.pagos[b.dataset.recPago];
-  S._rec=null; salvarProj(); render(); toast(b.dataset.v==="1"?"Marcado como pago este mês":"Voltou para a pagar"); });
+  const k=b.dataset.recPago+"|"+b.dataset.mes; S.proj.pagos={...(S.proj.pagos||{})};
+  if(b.dataset.v==="1") S.proj.pagos[k]=true; else delete S.proj.pagos[k];
+  salvarProj(); render(); toast(b.dataset.v==="1"?"Marcado como pago":"Voltou para a pagar"); });
 function salvarProj(){
   clearTimeout(tSalvar); const st=$("#pj-status"); if(st) st.textContent="Salvando…";
   tSalvar=setTimeout(async()=>{
@@ -1424,16 +1431,14 @@ function contasDoMes(o=S.mes){
     itens.push({dia,tipo:"receita",icone:x.tipo==="aluguel"?"key-round":"briefcase",desc:x.descricao,meta:nomeMembro(x.titular_id),valor:Number(x.valor)*(x.tipo==="salario"?fator:1),st:st(dia)});
     if(x.recebe_13&&r.mes===11) itens.push({dia:Math.min(20,r.ult),tipo:"receita",icone:"gift",desc:"13º · "+x.descricao,meta:nomeMembro(x.titular_id),valor:Number(x.valor)*fator,st:st(20)}); });
   filtro(despesasTodas()).forEach(x=>{ const dia=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
-    if(x.auto){ const pago=o===0&&x.pagoMes0;
-      itens.push({dia,tipo:"despesa",icone:"landmark",desc:x.descricao,meta:nomeMembro(x.titular_id)+" · todo mês (achado no extrato)",valor:Number(x.valor),info:pago,
-        rec:o===0?x.chave:null, recPago:pago,
-        st: pago?"pago": (o===0&&dia<=hd)?"em aberto":st(dia)}); return; }
+    const mk=mesKeyOff(o), pago=pagoEm(x.id,mk);
     const idx = (dia>hd ? o+1 : o); // ocorrência nº idx das restantes
     if(R!==null && o===0 && dia<=hd){ if(R<0) return; }
     else if(R!==null && (idx<1||idx>R)) return;
     const parc = R===null ? "" : (o===0&&dia<=hd ? "" : ` · parcela ${idx} de ${R}${R-idx===0?" (última)":""}`);
     const cat=S.cats.find(c=>c.id===x.categoria_id);
-    itens.push({dia,tipo:"despesa",icone:cat?.icone||"calendar-days",desc:x.descricao,meta:nomeMembro(x.titular_id)+parc,valor:Number(x.valor)*inf,st:st(dia)}); });
+    itens.push({dia,tipo:"despesa",icone:cat?.icone||"calendar-days",desc:x.descricao,meta:nomeMembro(x.titular_id)+parc,valor:Number(x.valor)*inf,
+      info:pago, rec:x.id, recMes:mk, recPago:pago, st: pago?"pago":(o===0&&dia<=hd)?"em aberto":st(dia)}); });
   const fat=faturasPrevistas(o+1);
   filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][o]; if(!f||f.valor<=0) return;
     const dia=Math.min(Number(c.dia_vencimento)||r.ult,r.ult), partes=[];
@@ -1464,7 +1469,7 @@ function secMes(){
       <div class="item${i.st==="passou"?" passou":""}">
         <div class="dot date"><b>${i.dia}</b><small>${r.curto}</small></div>
         <div><div class="t"><span class="ti">${ic(i.icone,"ico",15)}</span>${esc(i.desc)}</div><div class="m">${esc(i.meta)}</div></div>
-        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"já paguei"}</button>`:""}</div>
+        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-mes="${i.recMes}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"marcar pago"}</button>`:""}</div>
       </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nada previsto. Cadastre salários e gastos fixos em Cadastros.</div>`}</div>`}
   </section>`;
 }
