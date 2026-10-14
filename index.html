@@ -832,11 +832,14 @@ function nomesProprios(){
   const n=[...S.membros.map(m=>m.nome_completo||""),md.full_name||"",md.name||""].filter(Boolean);
   return S._nomes=n.map(s=>normTxt(s).split(/\s+/).filter(t=>t.length>2)).filter(a=>a.length>=2);
 }
+const chaveDesc=s=>normTxt(s).replace(/\s*\(\d+\/\d+\)\s*$/,"").replace(/\s+/g," ").trim();
 function ehInterno(l){
   const d=normTxt(l.descricao);
-  if(/pagamento de fatura|pagamento recebido|pagto\.? fatura|pgto\.? fatura|pagamento fatura|aplicacao|resgate|\brdb\b|\bcdb\b|tesouro direto|caixinha|cofrinho|guardado|investimento|estorno/.test(d)) return true;
-  const cp=d.split("|")[1]||""; if(!cp) return false;
-  return nomesProprios().some(tok=>tok.every(t=>cp.includes(t)));
+  if(((S.proj&&S.proj.ignorar)||[]).includes(chaveDesc(l.descricao))) return true;   // marcado por você como "não é gasto"
+  if(/pagamento de fatura|pagamento recebido|pagto\.? fatura|pgto\.? fatura|pagamento fatura|aplicacao|resgate|\brdb\b|\bcdb\b|tesouro|caixinha|cofrinho|guardado|investimento|investment|compra de acoes|venda de acoes|\bfii\b|estorno/.test(d)) return true;
+  if(!/pix|transf|\bted\b|\bdoc\b|\|/.test(d)) return false;
+  const cp=d.includes("|")?d.split("|").slice(1).join(" "):d;           // contraparte: nome depois do "|" ou a descrição toda (ex.: "Pix enviado para ...")
+  return nomesProprios().some(tok=>tok.filter(t=>cp.includes(t)).length>=Math.min(2,tok.length) && cp.includes(tok[0]));
 }
 const ehParcela=l=>l.parcela_total>1 || /\(\d+\/\d+\)\s*$/.test(l.descricao||"");
 
@@ -996,7 +999,29 @@ function desenharFech(){
     ${quebraHTML(r.s0, k>=3?ms:(k===1?ms.slice(0,2):ms.slice(0,1)), alvo)}
     <p class="muted" style="margin:0;font-size:.8rem">Considera o saldo disponível (sem investimentos), rendas e gastos fixos de Cadastros, faturas dos cartões no vencimento (atual + compras previstas + parcelas) e ${brl(divisaoVariavel().conta)}/mês de gastos no débito/Pix. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora.${semRenda?` <button class="link" data-tab="cad">Cadastre as rendas</button> para a previsão ficar completa.`:""}</p>`;
   el.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render();window.scrollTo(0,0);});
+  el.querySelectorAll("[data-ver-debito]").forEach(b=>b.onclick=modalDebito);
   el.querySelectorAll("[data-ver-fatura]").forEach(b=>b.onclick=()=>{S.tab="cartoes";S.mes=Number(b.dataset.verFatura);render();setTimeout(()=>{const f=$("#faturas"); if(f) f.scrollIntoView({behavior:"smooth"});},50);});
+}
+/* o que compõe a média de débito/Pix — e marcar o que não é gasto */
+function modalDebito(){
+  const hj=iso(new Date()), d0=new Date(); d0.setDate(d0.getDate()-90); const ini=iso(d0);
+  const fixas=new Set(S.cats.filter(c=>/contas fixas|moradia/i.test(c.nome)).map(c=>c.id));
+  const meses=Math.max(1,Math.min(3,(new Date(hj)-new Date(filtro(S.lanc,"user_id").filter(l=>l.data>=ini&&l.data<=hj).reduce((m,l)=>l.data<m?l.data:m,hj)))/864e5/30));
+  const base=filtro(S.lanc,"user_id").filter(l=>l.tipo==="despesa"&&!l.cartao_id&&l.data>=ini&&l.data<=hj&&!ehParcela(l)&&!fixas.has(l.categoria_id));
+  const grupos={}; base.filter(l=>!ehInterno(l)).forEach(l=>{ const k=chaveDesc(l.descricao); (grupos[k]=grupos[k]||{k,desc:l.descricao,n:0,v:0}); grupos[k].n++; grupos[k].v+=Number(l.valor); });
+  const lista=Object.values(grupos).sort((a,b)=>b.v-a.v), ign=(S.proj.ignorar||[]);
+  const tot=lista.reduce((s,g)=>s+g.v,0)/meses;
+  abrir(`<h2>Débito/Pix do dia a dia</h2>
+    <p class="muted" style="margin:0;font-size:.85rem">Média de <b>${brl(tot)}/mês</b> (últimos ${Math.round(meses*30)} dias, saídas da conta). Já ficam de fora: pagamento de fatura, aplicações/resgates, Pix entre suas contas e parcelas. Se algo abaixo não é gasto de verdade (ex.: transferência para outra conta sua), toque em <b>Não é gasto</b>.</p>
+    <div class="list" style="max-height:52vh;overflow:auto">${lista.map(g=>`<div class="item"><div class="dot">${ic("arrow-up-right")}</div>
+      <div><div class="t">${esc(g.desc)}</div><div class="m">${g.n}× · ${brl(g.v)} no período · ~${brl(g.v/meses)}/mês</div></div>
+      <div class="r"><button class="btn ghost sm" data-ign="${esc(g.k)}">Não é gasto</button></div></div>`).join("")||`<div class="empty">Nada no período.</div>`}</div>
+    ${ign.length?`<details><summary class="link" style="cursor:pointer">${ign.length} ${ign.length===1?"item marcado":"itens marcados"} como "não é gasto"</summary><div class="list">${ign.map(k=>`<div class="item"><div class="dot">${ic("eye-off")}</div><div><div class="t">${esc(k)}</div></div><div class="r"><button class="btn ghost sm" data-design="${esc(k)}">Voltar a contar</button></div></div>`).join("")}</div></details>`:""}
+    <div class="row-end"><button class="btn" data-close>Pronto</button></div>`, ()=>{
+    const salvar=()=>{ salvarProj(); fechar(); render(); modalDebito(); };
+    document.querySelectorAll("[data-ign]").forEach(b=>b.onclick=()=>{ S.proj.ignorar=[...new Set([...(S.proj.ignorar||[]),b.dataset.ign])]; salvar(); toast("Marcado como não é gasto"); });
+    document.querySelectorAll("[data-design]").forEach(b=>b.onclick=()=>{ S.proj.ignorar=(S.proj.ignorar||[]).filter(k=>k!==b.dataset.design); salvar(); });
+  });
 }
 /* de onde vem o saldo final: soma dos componentes dos meses do período */
 function quebraHTML(s0, ms, alvo){
@@ -1009,7 +1034,7 @@ function quebraHTML(s0, ms, alvo){
   Object.entries(fat).forEach(([id,v])=>{ const c=S.cartoes.find(x=>x.id===id)||{};
     linhas.push(`<div class="qrow"><span>Fatura ${esc(c.instituicao||"")} · ${esc(c.nome||"cartão")} <button class="link" data-ver-fatura="${mesDe[id]}">ver itens</button></span><span class="num neg">− ${brl(v)}</span></div>`); });
   if(soma("fixos")) linhas.push(linha("Gastos fixos (Cadastros)",-soma("fixos")));
-  if(soma("debito")) linhas.push(linha("Débito/Pix do dia a dia (média)",-soma("debito")));
+  if(soma("debito")) linhas.push(`<div class="qrow"><span>Débito/Pix do dia a dia (média) <button class="link" data-ver-debito>ver o que entra</button></span><span class="num neg">− ${brl(soma("debito"))}</span></div>`);
   if(soma("futDesp")) linhas.push(linha("Saídas já lançadas na conta",-soma("futDesp")));
   if(soma("extra")) linhas.push(linha("Gasto extra simulado",-soma("extra")));
   linhas.push(`<div class="qrow tot"><span>${esc(alvo.label)} fecha em</span><span class="num ${alvo.saldo<0?"neg":""}">${brl(alvo.saldo)}</span></div>`);
