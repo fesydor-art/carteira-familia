@@ -528,9 +528,13 @@ const BANDEIRAS = ["visa","mastercard","elo","amex","hipercard","outra"];
 function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.setAttribute("role","status"); t.innerHTML=ic("circle-check","ico",17)+`<span>${esc(msg)}</span>`; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
 /* filtro do topo: "todos", "p:<usuário>" ou "g:<grupo>" */
 function filtro(arr, key="titular_id"){
-  if(S.pessoa==="todos") return arr;
   const [t,id]=S.pessoa.split(":");
-  return t==="g" ? arr.filter(x=>x.grupo_id===id) : arr.filter(x=>x[key]===id);
+  if(t==="g") return arr.filter(x=>x.grupo_id===id);
+  // perfis privados (ex.: IPTV) ficam separados: não entram em "Todos" nem no filtro por pessoa
+  const priv=new Set((S.grupos||[]).filter(g=>g.privado).map(g=>g.id));
+  const fora=x=>x&&x.grupo_id&&priv.has(x.grupo_id);
+  if(S.pessoa==="todos") return arr.filter(x=>!fora(x));
+  return arr.filter(x=>x[key]===id && !fora(x));
 }
 const parcTxt = x => x.parcela_total>1 ? `${x.parcela_num}/${x.parcela_total}` : ((x.descricao||"").match(/\((\d+\/\d+)\)$/)||[])[1]||"";
 function grupoPadrao(){ if(S.pessoa.startsWith("g:")) return S.pessoa.slice(2); return (S.grupos.find(g=>/casal/i.test(g.nome))||S.grupos[0]||{}).id||""; }
@@ -619,7 +623,7 @@ async function carregar(){
     q("rendas",["dia"]), q("despesas_fixas",["dia"])
   ]);
   const err=[m,i,c,k,g,ca,l,rd,df].find(r=>r.error); if(err) { toast("Erro ao carregar: "+err.error.message); }
-  S._nomes=null; S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
+  S._nomes=null; S._rec=null; S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
   S.grupos=g.data||[]; S.cats=ca.data||[]; S.lanc=l.data||[];
   if(S.parcOK===undefined){ const pr=await sb.from("lancamentos").select("compra_id").eq("familia_id",fid).limit(1); S.parcOK=!pr.error; }
   if(S.perfilOK===undefined){ const pr=await sb.from("membros").select("avatar_url").eq("familia_id",fid).limit(1); S.perfilOK=!pr.error; }
@@ -841,12 +845,39 @@ function ehInterno(l){
   const cp=d.includes("|")?d.split("|").slice(1).join(" "):d;           // contraparte: nome depois do "|" ou a descrição toda (ex.: "Pix enviado para ...", ou só o nome)
   return nomesProprios().some(tok=>tok.filter(t=>cp.includes(t)).length>=Math.min(2,tok.length) && cp.includes(tok[0]));
 }
+/* empréstimos e financiamentos pagos todo mês (achados nos lançamentos do banco) — entram como contas a pagar */
+const chaveRec=s=>normTxt(s).replace(/s\/a/g,"sa").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+const RE_EMPREST=/votorantim|parcela paga|emprestimo|financiamento|prestacao|consorcio|ademicon|credito pessoal|consignado/;
+function recorrentesDetectados(){
+  if(S._rec) return S._rec;
+  const hoje=new Date(), mesAt=iso(hoje).slice(0,7), d0=new Date(hoje.getFullYear(),hoje.getMonth()-4,1,12), ini=iso(d0);
+  const cad=S.despesas.map(d=>chaveRec(d.descricao));
+  const g={};
+  (S.lanc||[]).filter(l=>l.tipo==="despesa"&&!l.cartao_id&&l.data>=ini&&RE_EMPREST.test(normTxt(l.descricao))).forEach(l=>{
+    const k=chaveRec(l.descricao); (g[k]=g[k]||[]).push(l); });
+  const out=[];
+  Object.entries(g).forEach(([k,ls])=>{
+    const meses=new Set(ls.map(l=>l.data.slice(0,7)));
+    const anteriores=[...meses].filter(m=>m<mesAt);
+    if(anteriores.length<2) return;                                   // precisa repetir em pelo menos 2 meses
+    if(cad.some(c=>c&&(c.includes(k)||k.includes(c)))) return;        // já cadastrado em Gastos fixos
+    if(((S.proj&&S.proj.ignorar)||[]).includes(chaveDesc(ls[0].descricao))) return;
+    ls.sort((a,b)=>b.data.localeCompare(a.data)); const u=ls[0];
+    const desc=u.descricao.split("|").map(x=>x.trim()).filter(Boolean).pop();
+    out.push({id:"auto:"+k, descricao:(/parcela paga/i.test(u.descricao)?"Empréstimo · ":/votorantim/i.test(u.descricao)?"Financiamento · ":"")+desc,
+      valor:Number(u.valor), dia:Number(u.data.slice(8,10)), parcelas_restantes:null, origem:"auto", auto:true,
+      grupo_id:u.grupo_id||null, titular_id:u.user_id, categoria_id:null, pagoMes0:meses.has(mesAt)});
+  });
+  return S._rec=out;
+}
+const despesasTodas=()=>S.despesas.concat(recorrentesDetectados());
+
 const ehParcela=l=>l.parcela_total>1 || /\(\d+\/\d+\)\s*$/.test(l.descricao||"");
 
 /* médias mensais (últimos 90 dias até hoje), sem internos e sem parcelas (parcelas entram uma a uma) */
 /* pagamento de empréstimo já coberto por um gasto fixo importado do banco: fica fora da média para não contar duas vezes */
 function ehPagEmprestimo(l){
-  if(!filtro(S.despesas).some(d=>d.origem==="pluggy")) return false;
+  if(!filtro(despesasTodas()).some(d=>d.origem==="pluggy"||d.auto)) return false;
   return /parcela paga|pagamento de emprestimo|pagamento emprestimo|emprestimo|financiamento|prestacao/.test(normTxt(l.descricao));
 }
 function estimativas(){
@@ -911,7 +942,7 @@ function faturasPrevistas(nMeses,aj=1){
 /* motor dia a dia: rendas, gastos fixos, faturas (atual + estimadas + parcelas), gasto em conta e lançamentos futuros */
 function motor(nMeses, sim){
   const p=S.proj, hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate(), hj=iso(hoje);
-  const rendas=filtro(S.rendas), desp=filtro(S.despesas).map(d=>({...d,rest:vazio(d.parcelas_restantes)?Infinity:Number(d.parcelas_restantes)}));
+  const rendas=filtro(S.rendas), desp=filtro(despesasTodas()).map(d=>({...d,rest:vazio(d.parcelas_restantes)?Infinity:Number(d.parcelas_restantes)}));
   const aj=1+((sim&&sim.ajuste)||0)/100, cartoes=filtro(S.cartoes), fat=faturasPrevistas(nMeses,aj), varConta=divisaoVariavel().conta;
   const s0 = vazio(p.saldoInicial) ? liquidoAtual() : Number(p.saldoInicial);
   let saldo=s0, fator=1; const dias=[{d:new Date(hoje),saldo,ev:false}], meses=[];
@@ -925,7 +956,9 @@ function motor(nMeses, sim){
       let r=0,g=0;
       rendas.forEach(x=>{ let v=0; if(Math.min(x.dia,last)===day) v+=Number(x.valor)*(x.tipo==="salario"?fator:1);
         if(x.recebe_13 && mes===11 && day===Math.min(20,last)) v+=Number(x.valor)*fator; r+=v; comp.rendas+=v; });
-      desp.forEach(x=>{ if(Math.min(x.dia,last)===day && x.rest>0){ const v=Number(x.valor)*inf*aj; g+=v; comp.fixos+=v; x.rest--; } });
+      desp.forEach(x=>{ if(m===0 && x.auto && x.pagoMes0) return;   // já pago este mês
+        const dx = (m===0 && x.auto && x.dia<=hd) ? Math.min(hd+1,last) : Math.min(x.dia,last);   // ainda não pago e o dia já passou: conta como a pagar
+        if(dx===day && x.rest>0){ const v=Number(x.valor)*inf*aj; g+=v; comp.fixos+=v; x.rest--; } });
       cartoes.forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const dd=Math.max(start,Math.min(Number(c.dia_vencimento)||last,last)); if(day===dd){ g+=f.valor; comp.faturas[c.id]=(comp.faturas[c.id]||0)+f.valor; } });
       (futuros[iso(new Date(y,mo,day,12))]||[]).forEach(l=>{ if(l.tipo==="receita"){ r+=Number(l.valor); comp.futRec+=Number(l.valor); } else { g+=Number(l.valor); comp.futDesp+=Number(l.valor); } });
       if(sim && sim.extraValor>0 && m===Number(sim.extraMes) && day===Math.max(start,Math.min(15,last))){ g+=Number(sim.extraValor); comp.extra+=Number(sim.extraValor); }
@@ -1064,7 +1097,8 @@ function calcSobra(){
     const inf=Math.pow(1+Number(p.inflacao)/100,o/12);
     filtro(S.rendas).forEach(x=>{ if(Math.min(x.dia,r.ult)>=ini) eP+=Number(x.valor)*(x.tipo==="salario"?fator:1);
       if(x.recebe_13&&r.mes===11&&Math.min(20,r.ult)>=ini) eP+=Number(x.valor)*fator; });
-    filtro(S.despesas).forEach(x=>{ const d=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
+    filtro(despesasTodas()).forEach(x=>{ const d=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
+      if(x.auto && atual){ if(!x.pagoMes0) sP+=Number(x.valor); return; }
       if(d<ini) return; const idx=d>hd?o+1:o; if(R!==null&&idx>R) return; sP+=Number(x.valor)*inf; });
     const e=divisaoVariavel(); sP+=(e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0))*inf*frac;
     filtro(S.lanc,"user_id").filter(l=>l.data>hj&&l.data>=r.ini&&l.data<=r.fim&&!ehInterno(l)).forEach(l=>{ if(l.tipo==="receita") eP+=Number(l.valor); else sP+=Number(l.valor); });
@@ -1135,7 +1169,7 @@ function secFaturas(){
 
 /* aba Projeção */
 function secProj(){
-  const p=S.proj, ren=filtro(S.rendas), des=filtro(S.despesas);
+  const p=S.proj, ren=filtro(S.rendas), des=filtro(despesasTodas());
   const tr=ren.reduce((s,x)=>s+Number(x.valor),0), td=des.reduce((s,x)=>s+Number(x.valor),0);
   return `<div class="pj">
   <section class="panel">
@@ -1384,7 +1418,10 @@ function contasDoMes(o=S.mes){
   filtro(S.rendas).forEach(x=>{ const dia=Math.min(x.dia,r.ult);
     itens.push({dia,tipo:"receita",icone:x.tipo==="aluguel"?"key-round":"briefcase",desc:x.descricao,meta:nomeMembro(x.titular_id),valor:Number(x.valor)*(x.tipo==="salario"?fator:1),st:st(dia)});
     if(x.recebe_13&&r.mes===11) itens.push({dia:Math.min(20,r.ult),tipo:"receita",icone:"gift",desc:"13º · "+x.descricao,meta:nomeMembro(x.titular_id),valor:Number(x.valor)*fator,st:st(20)}); });
-  filtro(S.despesas).forEach(x=>{ const dia=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
+  filtro(despesasTodas()).forEach(x=>{ const dia=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
+    if(x.auto){ const pago=o===0&&x.pagoMes0;
+      itens.push({dia,tipo:"despesa",icone:"landmark",desc:x.descricao,meta:nomeMembro(x.titular_id)+" · todo mês (achado no extrato)",valor:Number(x.valor),info:pago,
+        st: pago?"pago": (o===0&&dia<=hd)?"em aberto":st(dia)}); return; }
     const idx = (dia>hd ? o+1 : o); // ocorrência nº idx das restantes
     if(R!==null && o===0 && dia<=hd){ if(R<0) return; }
     else if(R!==null && (idx<1||idx>R)) return;
