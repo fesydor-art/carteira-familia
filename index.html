@@ -1093,25 +1093,15 @@ function quebraHTML(s0, ms, alvo){
 
 /* ---------- SOBRA DO MÊS (entradas − saídas, no mês selecionado) ---------- */
 function calcSobra(){
-  const r=mesRef(), o=S.mes, hoje=new Date(); hoje.setHours(12,0,0,0); const hj=iso(hoje), hd=hoje.getDate();
+  // mesma base do "Fechamento previsto": dinheiro que entra e sai da conta (fatura do cartão conta no dia do pagamento)
+  const r=mesRef(), o=S.mes, hoje=new Date(); hoje.setHours(12,0,0,0); const hj=iso(hoje);
   const passado=o<0, atual=o===0, lim=passado?r.fim:(atual?hj:null);
-  const real=lim?filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=lim&&!ehInterno(l)):[];
+  const ehPagFatura=l=>/pagamento de fatura|pagamento fatura|pagto fatura|fatura do cartao|pagamento cartao/.test(normTxt(l.descricao));
+  const real=lim?filtro(S.lanc,"user_id").filter(l=>!l.cartao_id&&l.data>=r.ini&&l.data<=lim&&(!ehInterno(l)||(l.tipo==="despesa"&&ehPagFatura(l)))):[];
   const eR=real.filter(l=>l.tipo==="receita").reduce((s,l)=>s+Number(l.valor),0);
   const sR=real.filter(l=>l.tipo==="despesa").reduce((s,l)=>s+Number(l.valor),0);
   let eP=0,sP=0;
-  if(!passado){
-    const p=S.proj, ini=atual?hd+1:1, frac=Math.max(0,r.ult-ini+1)/r.ult;
-    let fator=1; for(let m=1;m<=o;m++){ const mm=new Date(hoje.getFullYear(),hoje.getMonth()+m,1).getMonth(); if(mm===Number(p.mesReajuste)) fator*=1+Number(p.reajuste)/100; }
-    const inf=Math.pow(1+Number(p.inflacao)/100,o/12);
-    filtro(S.rendas).forEach(x=>{ if(Math.min(x.dia,r.ult)>=ini) eP+=Number(x.valor)*(x.tipo==="salario"?fator:1);
-      if(x.recebe_13&&r.mes===11&&Math.min(20,r.ult)>=ini) eP+=Number(x.valor)*fator; });
-    filtro(despesasTodas()).forEach(x=>{ const d=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
-      if(pagoEm(x.id, mesKeyOff(o))) return;
-      if(atual && d<ini){ sP+=Number(x.valor); return; }   // venceu e não está marcada como paga
-      if(d<ini) return; const idx=d>hd?o+1:o; if(R!==null&&idx>R) return; sP+=Number(x.valor)*inf; });
-    const e=divisaoVariavel(); sP+=(e.conta+Object.values(e.cartao).reduce((a,b)=>a+b,0))*inf*frac;
-    filtro(S.lanc,"user_id").filter(l=>l.data>hj&&l.data>=r.ini&&l.data<=r.fim&&!ehInterno(l)).forEach(l=>{ if(l.tipo==="receita") eP+=Number(l.valor); else sP+=Number(l.valor); });
-  }
+  if(!passado){ const m=motor(o+1).meses[o]; if(m){ eP=m.rec; sP=m.gas; } }
   return {r,passado,atual,eR,sR,eP,sP,E:eR+eP,S:sR+sP};
 }
 function secSobra(){
@@ -1125,7 +1115,7 @@ function secSobra(){
       <div><span class="label">Sobra</span><span class="v" style="color:${sobra<0?"var(--neg)":"var(--fg)"}">${brl(sobra)}</span><span class="muted" style="font-size:.78rem">${x.E>0?`${Math.round(sobra/x.E*100)}% das entradas`:"cadastre suas rendas"}</span></div>
     </div>
     <div class="bar" aria-hidden="true"><i class="${pct>=100?"over":pct>=85?"hot":""}" style="width:${pct.toFixed(1)}%"></i></div>
-    <p class="muted" style="margin:0;font-size:.78rem">Saídas = gastos na conta + compras no cartão no mês em que foram feitas. Pagamento de fatura, aplicações e Pix entre suas contas ficam de fora. <button class="link" data-tab="lanc">Ver lançamentos</button></p>
+    <p class="muted" style="margin:0;font-size:.78rem">Mesma conta do Fechamento previsto: dinheiro que entra e sai da conta. O cartão entra quando a fatura é paga (não no dia da compra). Aplicações e Pix entre suas contas ficam de fora. <button class="link" data-tab="lanc">Ver lançamentos</button></p>
   </section>`;
 }
 
