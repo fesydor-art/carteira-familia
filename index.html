@@ -702,7 +702,7 @@ async function carregar(){
     q("rendas",["dia"]), q("despesas_fixas",["dia"])
   ]);
   const err=[m,i,c,k,g,ca,l,rd,df].find(r=>r.error); if(err) { toast("Erro ao carregar: "+err.error.message); }
-  S._nomes=null; S._rec=null; S._auto=null; S._marcas=null; S._agc=null; S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
+  S._nomes=null; S._rec=null; S._auto=null; S._marcas=null; S._agc=null; S._fpc=null; S.membros=m.data||[]; S.inst=i.data||[]; S.contas=(c.data||[]).filter(x=>x.ativo); S.cartoes=(k.data||[]).filter(x=>x.ativo);
   S.grupos=g.data||[]; S.cats=ca.data||[]; S.lanc=l.data||[];
   if(S.parcOK===undefined){ const pr=await sb.from("lancamentos").select("compra_id").eq("familia_id",fid).limit(1); S.parcOK=!pr.error; }
   if(S.perfilOK===undefined){ const pr=await sb.from("membros").select("avatar_url").eq("familia_id",fid).limit(1); S.perfilOK=!pr.error; }
@@ -730,7 +730,7 @@ async function boot(){
 
 /* ---------- RENDER PRINCIPAL ---------- */
 function render(){
-  S._agc=null;
+  S._agc=null; S._fpc=null;
   const contas=filtro(S.contas), cartoes=filtro(S.cartoes);
   const soma = a => a.reduce((s,c)=>s+Number(c.saldo),0);
   const disp = soma(contas.filter(c=>c.tipo!=="investimento")), invest = soma(contas.filter(c=>c.tipo==="investimento"));
@@ -837,10 +837,15 @@ function cardHTML(c){
     <div class="limit">
       <div class="bar" aria-hidden="true"><i class="${cls}" style="width:${pct.toFixed(1)}%"></i></div>
       <div class="lrow"><span class="muted">Disponível</span><strong class="num">${brl(c.disponivel)}</strong></div>
-      <div class="lrow"><span class="muted">Fatura ${c.dia_vencimento?`· vence dia ${c.dia_vencimento}`:""}</span><span class="num">${brl(c.fatura_atual)}</span></div>
+      ${(()=>{ const pf=proxFatura(c); return `<div class="lrow"><span class="muted">${pf?`Fatura · vence ${dt(pf.vence)}`:"Fatura"}</span><span class="num">${pf?brl(pf.valor):"em dia"}</span></div>`; })()}
       ${c.origem==="pluggy"?`<span class="pill auto" style="align-self:flex-start">${ic("refresh-cw","ico",11)} Automático</span>`:""}
     </div>
   </div>`;
+}
+function proxFatura(c){
+  const fat=faturasPrevistas(3); const f=fat[c.id]||{};
+  for(let m=0;m<3;m++){ const x=f[m]; if(x&&!x.paga&&x.valor>0.005) return {valor:x.valor, vence:(x.ciclo&&x.ciclo.vence)||iso(dataDia(new Date().getFullYear(),new Date().getMonth()+m,Number(c.dia_vencimento)||28))}; }
+  return null;
 }
 function secCartoes(cartoes){
   return `<section style="display:flex;flex-direction:column;gap:10px">
@@ -1009,23 +1014,50 @@ function fracaoAteFechar(c,hoje){
   return Math.min(1,Math.max(0,(alvo-hoje)/864e5/30));
 }
 /* faturas previstas por cartão e mês: {cartaoId:{m:{valor, atual, estimado, parcelas}}} */
+/* ciclo da fatura que vence no mês m (0 = este): compras em (ini, fim], vence em "vence" */
+function dataDia(y,mo,d){ const last=new Date(y,mo+1,0).getDate(); return new Date(y,mo,Math.min(d,last),12); }
+function cicloFatura(c,m){
+  const venc=Number(c.dia_vencimento)||0; if(!venc) return null;
+  const h=new Date(), fech=diaFech(c)||Math.max(1,venc-7), y=h.getFullYear(), mo=h.getMonth()+m, off=fech<venc?0:-1;
+  return {ini:iso(dataDia(y,mo+off-1,fech)), fim:iso(dataDia(y,mo+off,fech)), vence:iso(dataDia(y,mo,venc)), venceAnt:iso(dataDia(y,mo-1,venc))};
+}
+const ehPagCartao=l=>l.tipo==="receita"&&/pagamento|pagto|pgto|pag fatura/.test(normTxt(l.descricao));
+/* faturas por cartão e mês. Cartão do banco: soma as compras do ciclo (o "saldo" do banco é o limite usado e inclui parcelas futuras,
+   por isso não serve como fatura). Cartão manual: fatura digitada + parcelas lançadas. */
 function faturasPrevistas(nMeses,aj=1){
+  const ck=nMeses+"|"+aj+"|"+S.pessoa; S._fpc=S._fpc||{}; if(S._fpc[ck]) return S._fpc[ck];
   const hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate(), p=S.proj, hj=iso(hoje);
   const est=divisaoVariavel(), out={};
   filtro(S.cartoes).forEach(c=>{
-    const md=mesFaturaAtual(c,hd), media=est.cartao[c.id]||0, f={};
-    for(let m=md;m<nMeses;m++){
-      const inf=Math.pow(1+Number(p.inflacao)/100,m/12);
-      f[m]= m===md ? {atual:Number(c.fatura_atual)||0, estimado:media*inf*aj*fracaoAteFechar(c,hoje), parcelas:0}
-                   : {atual:0, estimado:media*inf*aj, parcelas:0};
+    const media=est.cartao[c.id]||0, f={}, banco=c.origem==="pluggy"||!!c.pluggy_account_id;
+    const tx=S.lanc.filter(l=>l.cartao_id===c.id);
+    for(let m=0;m<nMeses;m++){
+      const inf=Math.pow(1+Number(p.inflacao)/100,m/12), cy=cicloFatura(c,m);
+      if(banco && cy){
+        if(cy.vence<hj) continue;                                  // já venceu
+        const itens=tx.filter(l=>l.data>cy.ini&&l.data<=cy.fim);
+        const soma=a=>a.reduce((s,l)=>s+Number(l.valor),0);
+        const compras=soma(itens.filter(l=>l.tipo==="despesa"&&!ehParcela(l))), parcelas=soma(itens.filter(l=>l.tipo==="despesa"&&ehParcela(l)));
+        const creditos=soma(itens.filter(l=>l.tipo==="receita"&&!ehPagCartao(l)));
+        const pagos=tx.filter(l=>ehPagCartao(l)&&l.data>cy.venceAnt&&l.data<=cy.vence), pagoBanco=soma(pagos);
+        const aberta=cy.fim>=hj, estimado=aberta?media*inf*aj*(cy.ini<hj?fracaoAteFechar(c,hoje):1):0;
+        const total=Math.max(0,compras+parcelas-creditos)+estimado, valor=Math.max(0,total-pagoBanco);
+        f[m]={ciclo:cy,itens,compras,parcelas,creditos,pagoBanco,estimado,total,valor,aberta,atual:Math.max(0,compras-creditos),
+          autoPaga: total>0.5&&valor<=0.5, dataPag: pagos.map(l=>l.data).sort().pop()||null};
+      } else {
+        const md=mesFaturaAtual(c,hd); if(m<md) continue;
+        const atual=m===md?Number(c.fatura_atual)||0:0, estimado=m===md?media*inf*aj*fracaoAteFechar(c,hoje):media*inf*aj;
+        f[m]={ciclo:cy,itens:[],compras:atual,parcelas:0,creditos:0,pagoBanco:0,estimado,aberta:true,atual,autoPaga:false};
+      }
     }
-    S.lanc.filter(l=>l.cartao_id===c.id&&l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)).forEach(l=>{
-      const m=Math.max(md,mesPagamento(c,l.data,hoje)); if(f[m]) f[m].parcelas+=Number(l.valor); });
-    Object.entries(f).forEach(([m,x])=>{ x.valor=x.atual+x.estimado+x.parcelas;
-      if(pagoEm("fat:"+c.id, mesKeyOff(Number(m)))){ x.pagaValor=x.valor; x.paga=true; } });   // fatura marcada como paga (a agenda tira da previsão)
+    if(!banco){ const md=mesFaturaAtual(c,hd);
+      tx.filter(l=>l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)).forEach(l=>{ const m=Math.max(md,mesPagamento(c,l.data,hoje)); if(f[m]){ f[m].parcelas+=Number(l.valor); f[m].itens.push(l); } });
+      Object.values(f).forEach(x=>{ x.total=x.compras+x.parcelas+x.estimado; x.valor=x.total; }); }
+    Object.entries(f).forEach(([m,x])=>{ const mm=marca("fat:"+c.id, mesKeyOff(Number(m)));
+      x.paga = mm!==null ? mm : x.autoPaga; x.pagaValor=x.total; });
     out[c.id]=f;
   });
-  return out;
+  return S._fpc[ck]=out;
 }
 
 
@@ -1179,40 +1211,36 @@ function cicloAtual(c){
   return {ini:iso(new Date(ant.getTime()+864e5)), fim:iso(prox)};
 }
 function secFaturas(){
-  const o=Math.max(0,S.mes), r=mesRef(o), cartoes=filtro(S.cartoes), hoje=new Date(); hoje.setHours(12,0,0,0);
-  const hj=iso(hoje), fat=faturasPrevistas(o+1);
+  const o=Math.max(0,S.mes), r=mesRef(o), cartoes=filtro(S.cartoes), hj=iso(new Date()), fat=faturasPrevistas(o+1);
   if(!cartoes.length) return "";
-  const blocos=cartoes.map(c=>{
-    const f=fat[c.id]&&fat[c.id][o], md=mesFaturaAtual(c,hoje.getDate()), dv=Math.min(Number(c.dia_vencimento)||r.ult,r.ult);
-    const venc=`${dv} ${r.curto}`;
-    const btnPaga=(pg)=>`<button class="btn ${pg?"ghost":""} sm" data-rec-pago="fat:${c.id}" data-rmes="${mesKeyOff(o)}" data-v="${pg?0:1}">${ic(pg?"rotate-ccw":"circle-check","ico",14)} ${pg?"Desfazer":"Marcar como paga"}</button>`;
-    if(f&&f.paga) return `<div class="fat"><div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)} <span class="pill">paga</span></div><div class="m">Vence ${venc} · ${brl(f.pagaValor)} · não entra mais na previsão</div></div>${btnPaga(true)}</div></div>`;
-    if(!f||f.valor<=0) return `<div class="fat"><div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)}</div><div class="m">Nada previsto para vencer em ${r.nome}${o<md?" (a fatura deste mês já venceu)":""}</div></div><div class="amt">${brl(0)}</div></div></div>`;
-    let itens=[], titulo, nota;
-    if(o===md){
-      const ci=cicloAtual(c), lim=iso(new Date(hoje.getTime()-35*864e5));
-      itens=S.lanc.filter(l=>l.cartao_id===c.id&&!ehInterno(l)&&(ci?(l.data>=ci.ini&&l.data<=hj):(l.data<=hj&&l.data>lim)));
-      titulo="Fatura aberta"; nota=ci?`Fecha em ${dt(ci.fim)} · vence ${venc}`:`Vence ${venc}`;
-    } else { titulo="Fatura prevista"; nota=`Vence ${venc}`; }
-    const parcelas=S.lanc.filter(l=>l.cartao_id===c.id&&l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)&&Math.max(md,mesPagamento(c,l.data,hoje))===o);
-    const somaItens=itens.reduce((s,l)=>s+(l.tipo==="despesa"?1:-1)*Number(l.valor),0);
-    const linhaL=l=>`<div class="item"><div class="dot">${ic((S.cats.find(x=>x.id===l.categoria_id)||{}).icone||"tag")}</div>
-      <div><div class="t">${esc(l.descricao)}</div><div class="m">${dt(l.data)}${parcTxt(l)?" · parcela "+parcTxt(l).replace("/"," de "):""}</div></div>
+  const linhaL=l=>`<div class="item"><div class="dot">${ic((S.cats.find(x=>x.id===l.categoria_id)||{}).icone||"tag")}</div>
+      <div><div class="t">${esc(l.descricao.replace(/\s*\(\d+\/\d+\)$/,""))}</div><div class="m">${dt(l.data)}${parcTxt(l)?" · parcela "+parcTxt(l).replace("/"," de "):""}</div></div>
       <div class="r"><div class="amt ${l.tipo==="receita"?"pos":"neg"}">${l.tipo==="receita"?"+":"−"} ${brl(l.valor)}</div></div></div>`;
+  let total=0;
+  const blocos=cartoes.map(c=>{
+    const f=fat[c.id]&&fat[c.id][o], cy=f&&f.ciclo||cicloFatura(c,o), tit=`${esc(c.instituicao||"")} · ${esc(c.nome)}`, banco=c.origem==="pluggy"||!!c.pluggy_account_id;
+    if(!f||f.total<=0.005) return `<div class="fat"><div class="fat-h"><div><div class="t">${tit}</div><div class="m">${cy&&cy.vence<hj?`A fatura de ${r.nome} já venceu (dia ${Number(cy.vence.slice(8))}).`:`Nada para pagar em ${r.nome}.`}</div></div><div class="amt">${brl(0)}</div></div></div>`;
+    if(!f.paga) total+=f.valor;
+    const btn=`<button class="btn ${f.paga?"ghost":""} sm" data-rec-pago="fat:${c.id}" data-rmes="${mesKeyOff(o)}" data-v="${f.paga?0:1}">${ic(f.paga?"rotate-ccw":"circle-check","ico",14)} ${f.paga?"Desmarcar":"Marcar como paga"}</button>`;
+    const pill=f.paga?`<span class="pill" style="background:var(--pos-soft);color:var(--pos)">${f.autoPaga&&marca("fat:"+c.id,mesKeyOff(o))===null?"paga no banco":"paga"}</span>`:`<span class="pill ${f.aberta?"auto":""}">${f.aberta?"aberta":"fechada"}</span>`;
+    const nota=cy?`${banco?`Compras de ${dt(iso(new Date(new Date(cy.ini+"T12:00:00").getTime()+864e5)))} a ${dt(cy.fim)} · `:""}${f.aberta?"fecha":"fechou"} ${dt(cy.fim)} · vence ${dt(cy.vence)}`:"";
+    const compras=f.itens.filter(l=>!ehParcela(l)&&!ehPagCartao(l)), parcs=f.itens.filter(l=>ehParcela(l));
+    const box=(rot,v,cls)=>`<div><span class="label">${rot}</span><b class="num ${cls||""}">${brl(v)}</b></div>`;
     return `<div class="fat">
-      <div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)} <span class="pill ${o===md?"auto":""}">${titulo}</span></div><div class="m">${nota} · ${esc(nomeMembro(c.titular_id))}</div></div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="amt neg" style="font-size:1.15rem">${brl(f.valor)}</div>${btnPaga(false)}</div></div>
+      <div class="fat-h"><div><div class="t">${tit} ${pill}</div><div class="m">${nota} · ${esc(nomeMembro(c.titular_id))}</div></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="amt ${f.paga?"":"neg"}" style="font-size:1.15rem">${brl(f.paga?f.total:f.valor)}</div>${btn}</div></div>
       <div class="fat-comp">
-        ${f.atual?`<div><span class="label">No banco hoje</span><b class="num">${brl(f.atual)}</b></div>`:""}
-        ${f.parcelas?`<div><span class="label">Parcelas</span><b class="num">${brl(f.parcelas)}</b></div>`:""}
-        ${f.estimado?`<div><span class="label">Compras previstas</span><b class="num">~${brl(f.estimado)}</b></div>`:""}
+        ${banco?box("Compras",f.compras):box("Fatura digitada",f.compras)}
+        ${f.parcelas?box("Parcelas",f.parcelas):""}
+        ${f.creditos?box("Estornos",-f.creditos,"pos"):""}
+        ${f.estimado?box("Previsto até fechar",f.estimado):""}
+        ${f.pagoBanco?box("Já pago",-f.pagoBanco,"pos"):""}
       </div>
-      ${itens.length?`<details><summary>${itens.length} compras desta fatura · soma ${brl(somaItens)}</summary><div class="list">${itens.sort((a,b)=>b.data.localeCompare(a.data)).map(linhaL).join("")}</div></details>`:""}
-      ${parcelas.length?`<details><summary>${parcelas.length} parcelas que caem nesta fatura · ${brl(parcelas.reduce((s,l)=>s+Number(l.valor),0))}</summary><div class="list">${parcelas.map(linhaL).join("")}</div></details>`:""}
-      ${f.estimado?`<p class="muted" style="margin:0;font-size:.78rem">"Compras previstas" é a sua média de compras no cartão (sem parcelas) até a fatura fechar. Ajuste em Projeção → Gasto do dia a dia.</p>`:""}
+      ${compras.length?`<details><summary>${compras.length} ${compras.length===1?"compra":"compras"} nesta fatura</summary><div class="list">${compras.sort((a,b)=>b.data.localeCompare(a.data)).map(linhaL).join("")}</div></details>`:""}
+      ${parcs.length?`<details><summary>${parcs.length} ${parcs.length===1?"parcela":"parcelas"} nesta fatura · ${brl(f.parcelas)}</summary><div class="list">${parcs.map(linhaL).join("")}</div></details>`:""}
+      ${banco&&Number(c.fatura_atual)>f.total+1&&o===0?`<p class="muted" style="margin:0;font-size:.78rem">${ic("info","ico",13)} O banco mostra ${brl(c.fatura_atual)} de limite usado: isso soma esta fatura com as parcelas dos próximos meses, por isso é maior.</p>`:""}
     </div>`;
   }).join("");
-  const total=cartoes.reduce((s,c)=>s+((fat[c.id]&&fat[c.id][o]&&!fat[c.id][o].paga)?fat[c.id][o].valor:0),0);
   return `<section class="panel" id="faturas">
     <div class="sec-h"><h2>Faturas que vencem em ${r.nome}</h2><span class="amt neg">${brl(total)}</span></div>
     <p class="muted" style="margin:0;font-size:.82rem">Troque o mês no topo para ver as próximas faturas e as parcelas de cada uma.</p>
@@ -1475,7 +1503,7 @@ function marcas(){
   return S._marcas=out;
 }
 const marca=(key,mk)=>{ const o=marcas()[key+"|"+mk]; return o?o.v:null; };
-function marcar(key,mk,v){ S.proj.pagos={...(S.proj.pagos||{})}; S.proj.pagos[key+"|"+mk]={v,t:Date.now()}; S._marcas=null; salvarProj(); }
+function marcar(key,mk,v){ S.proj.pagos={...(S.proj.pagos||{})}; S.proj.pagos[key+"|"+mk]={v,t:Date.now()}; S._marcas=null; S._agc=null; S._fpc=null; salvarProj(); }
 
 /* em que meses uma conta cadastrada aparece: começa no mês de criado_em; "parcelas_restantes" conta a partir dele */
 const mkDe=d=>String(d||"").slice(0,7);
@@ -1514,8 +1542,8 @@ function agenda(nMeses, aj=1){
     const first=new Date(hoje.getFullYear(),hoje.getMonth()+m,1,12), mes=first.getMonth(), last=new Date(first.getFullYear(),mes+1,0,12).getDate(), mk=iso(first).slice(0,7);
     if(m>0 && mes===Number(p.mesReajuste)) fator*=1+Number(p.reajuste)/100;
     const inf=Math.pow(1+Number(p.inflacao)/100,m/12);
-    const add=e=>{ const mm=marca(e.key,mk), a=m===0&&!!(e.autoId&&auto[e.autoId]);
-      e.pago= mm!==null?mm:a; e.auto= mm===null&&a; e.autoL= e.auto?auto[e.autoId]:null;
+    const add=e=>{ const mm=marca(e.key,mk), a= e.autoPago!==undefined ? !!e.autoPago : m===0&&!!(e.autoId&&auto[e.autoId]);
+      e.pago= mm!==null?mm:a; e.auto= mm===null&&a; e.autoL= e.auto?(e.autoL||auto[e.autoId]):null;
       e.m=m; e.mk=mk; e.dia=Math.min(Math.max(1,Number(e.dia)||last),last);
       e.atrasada= m===0&&!e.pago&&e.dia<hd; e.hoje= m===0&&!e.pago&&e.dia===hd; ev.push(e); };
     filtro(S.rendas).forEach(x=>{
@@ -1525,8 +1553,11 @@ function agenda(nMeses, aj=1){
     filtro(S.despesas).forEach(x=>{ const oc=ocorrencia(x,mk); if(!oc) return; const cat=S.cats.find(c=>c.id===x.categoria_id);
       add({kind:"conta",tipo:"despesa",key:x.id,autoId:x.id,ref:x,desc:x.descricao,dia:x.dia,valor:Number(x.valor)*inf,icone:(cat&&cat.icone)||"receipt-text",quem:x.titular_id,
         parc: oc.faltam===null?"todo mês": oc.ultima?"última parcela": `faltam ${oc.faltam} parcelas`}); });
-    filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f) return; const v=f.atual+f.estimado+f.parcelas; if(v<=0.005) return;
-      add({kind:"fatura",tipo:"despesa",key:"fat:"+c.id,ref:c,desc:"Fatura "+[c.instituicao,c.nome].filter(Boolean).join(" · "),dia:Number(c.dia_vencimento)||last,valor:v,icone:"credit-card",quem:c.titular_id,f}); });
+    filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][m]; if(!f||f.total<=0.005) return;
+      const parcial=!f.autoPaga&&f.pagoBanco>0.005;
+      add({kind:"fatura",tipo:"despesa",key:"fat:"+c.id,ref:c,desc:"Fatura "+[c.instituicao,c.nome].filter(Boolean).join(" · "),dia:Number(c.dia_vencimento)||last,
+        valor: parcial?f.valor:f.total, icone:"credit-card",quem:c.titular_id,f, autoPago:f.autoPaga, autoL:f.autoPaga?{descricao:"pagamento da fatura",data:f.dataPag}:null,
+        parc: parcial?`já pagou ${brl(f.pagoBanco)} de ${brl(f.total)}`:(f.ciclo&&f.aberta?`fecha ${dt(f.ciclo.fim)}`:f.ciclo?"fechada":"")}); });
     futuros.filter(l=>l.data.slice(0,7)===mk).forEach(l=>ev.push({kind:"agendado",tipo:l.tipo,key:"l:"+l.id,ref:l,desc:l.descricao.replace(/\s*\(\d+\/\d+\)$/,""),
       dia:Number(l.data.slice(8,10)),valor:Number(l.valor),icone:"calendar-clock",quem:l.user_id,m,mk,pago:false,fixo:true}));
   }
