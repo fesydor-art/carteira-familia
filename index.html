@@ -657,7 +657,8 @@ function render(){
   const especie = soma(contas.filter(c=>c.tipo==="dinheiro")), nInv = contas.filter(c=>c.tipo==="investimento").length;
   const limTot = cartoes.reduce((s,c)=>s+Number(c.limite_total),0);
   const limDisp = cartoes.reduce((s,c)=>s+Number(c.disponivel),0);
-  const fatura = cartoes.reduce((s,c)=>s+Number(c.fatura_atual),0);
+  const hdT=new Date().getDate();
+  const fatura = cartoes.filter(c=>!pagoEm("fat:"+c.id, mesKeyOff(mesFaturaAtual(c,hdT)))).reduce((s,c)=>s+Number(c.fatura_atual),0);
 
   const NAV=[["geral","Início","layout-dashboard"],["cartoes","Cartões","credit-card"],["contas","Contas","landmark"],["lanc","Extrato","receipt-text"],["proj","Projeção","chart-line"],["cad","Cadastros","settings"]];
   const me=meuMembro();
@@ -688,7 +689,7 @@ function render(){
         <div><span class="hd">${ic("banknote","ico",15)}<span class="label">Disponível</span></span><span class="v">${brlV(disp)}</span><span class="s">${brl(especie)} em espécie</span></div>
         <div><span class="hd">${ic("trending-up","ico",15)}<span class="label">Investido</span></span><span class="v" style="color:var(--pos)">${brlV(invest)}</span><span class="s">${nInv} ${nInv===1?"aplicação":"aplicações"}</span></div>
         <div><span class="hd">${ic("credit-card","ico",15)}<span class="label">Limite disponível</span></span><span class="v">${brlV(limDisp)}</span><span class="s">de ${brl(limTot)}</span></div>
-        <div><span class="hd">${ic("receipt-text","ico",15)}<span class="label">Faturas abertas</span></span><span class="v" style="color:var(--neg)">${brlV(fatura)}</span><span class="s">${cartoes.length} ${cartoes.length===1?"cartão":"cartões"}</span></div>
+        <div><span class="hd">${ic("receipt-text","ico",15)}<span class="label">Faturas abertas</span></span><span class="v" style="color:var(--neg)">${brlV(fatura)}</span><span class="s">${cartoes.length} ${cartoes.length===1?"cartão":"cartões"} · <button class="link" data-tab="cartoes">marcar paga</button></span></div>
       </section>`:""}
       ${S.tab==="geral" ? secSobra() : ""}
       ${S.tab==="geral" ? secFechamento() : ""}
@@ -939,7 +940,8 @@ function faturasPrevistas(nMeses,aj=1){
     }
     S.lanc.filter(l=>l.cartao_id===c.id&&l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)).forEach(l=>{
       const m=Math.max(md,mesPagamento(c,l.data,hoje)); if(f[m]) f[m].parcelas+=Number(l.valor); });
-    Object.values(f).forEach(x=>x.valor=x.atual+x.estimado+x.parcelas);
+    Object.entries(f).forEach(([m,x])=>{ x.valor=x.atual+x.estimado+x.parcelas;
+      if(pagoEm("fat:"+c.id, mesKeyOff(Number(m)))){ x.pagaValor=x.valor; x.paga=true; x.valor=0; } });   // fatura marcada como paga: já saiu da conta
     out[c.id]=f;
   });
   return out;
@@ -1134,6 +1136,8 @@ function secFaturas(){
   const blocos=cartoes.map(c=>{
     const f=fat[c.id]&&fat[c.id][o], md=mesFaturaAtual(c,hoje.getDate()), dv=Math.min(Number(c.dia_vencimento)||r.ult,r.ult);
     const venc=`${dv} ${r.curto}`;
+    const btnPaga=(pg)=>`<button class="btn ${pg?"ghost":""} sm" data-rec-pago="fat:${c.id}" data-rmes="${mesKeyOff(o)}" data-v="${pg?0:1}">${ic(pg?"rotate-ccw":"circle-check","ico",14)} ${pg?"Desfazer":"Marcar como paga"}</button>`;
+    if(f&&f.paga) return `<div class="fat"><div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)} <span class="pill">paga</span></div><div class="m">Vence ${venc} · ${brl(f.pagaValor)} · não entra mais na previsão</div></div>${btnPaga(true)}</div></div>`;
     if(!f||f.valor<=0) return `<div class="fat"><div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)}</div><div class="m">Nada previsto para vencer em ${r.nome}${o<md?" (a fatura deste mês já venceu)":""}</div></div><div class="amt">${brl(0)}</div></div></div>`;
     let itens=[], titulo, nota;
     if(o===md){
@@ -1148,7 +1152,7 @@ function secFaturas(){
       <div class="r"><div class="amt ${l.tipo==="receita"?"pos":"neg"}">${l.tipo==="receita"?"+":"−"} ${brl(l.valor)}</div></div></div>`;
     return `<div class="fat">
       <div class="fat-h"><div><div class="t">${esc(c.instituicao||"")} · ${esc(c.nome)} <span class="pill ${o===md?"auto":""}">${titulo}</span></div><div class="m">${nota} · ${esc(nomeMembro(c.titular_id))}</div></div>
-        <div class="amt neg" style="font-size:1.15rem">${brl(f.valor)}</div></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="amt neg" style="font-size:1.15rem">${brl(f.valor)}</div>${btnPaga(false)}</div></div>
       <div class="fat-comp">
         ${f.atual?`<div><span class="label">No banco hoje</span><b class="num">${brl(f.atual)}</b></div>`:""}
         ${f.parcelas?`<div><span class="label">Parcelas</span><b class="num">${brl(f.parcelas)}</b></div>`:""}
@@ -1431,10 +1435,13 @@ function contasDoMes(o=S.mes){
     itens.push({dia,tipo:"despesa",icone:cat?.icone||"calendar-days",desc:x.descricao,meta:nomeMembro(x.titular_id)+parc,valor:Number(x.valor)*inf,
       info:pago, rec:x.id, recMes:mk, recPago:pago, st: pago?"pago":(o===0&&dia<=hd)?"em aberto":st(dia)}); });
   const fat=faturasPrevistas(o+1);
-  filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][o]; if(!f||f.valor<=0) return;
+  filtro(S.cartoes).forEach(c=>{ const f=fat[c.id]&&fat[c.id][o]; if(!f) return;
+    if(f.paga){ const dia=Math.min(Number(c.dia_vencimento)||r.ult,r.ult);
+      itens.push({dia,tipo:"despesa",icone:"credit-card",desc:"Fatura "+(c.instituicao||"")+" · "+c.nome,meta:nomeMembro(c.titular_id),valor:f.pagaValor,info:true,rec:"fat:"+c.id,recMes:mesKeyOff(o),recPago:true,semEditar:true,st:"pago"}); return; }
+    if(f.valor<=0) return;
     const dia=Math.min(Number(c.dia_vencimento)||r.ult,r.ult), partes=[];
     if(f.atual) partes.push(`${brl(f.atual)} já na fatura`); if(f.parcelas) partes.push(`${brl(f.parcelas)} de parcelas`); if(f.estimado) partes.push(`~${brl(f.estimado)} de compras previstas`);
-    itens.push({dia,tipo:"despesa",icone:"credit-card",desc:"Fatura "+(c.instituicao||"")+" · "+c.nome+(f.atual&&!f.estimado&&!f.parcelas?"":" (prevista)"),meta:nomeMembro(c.titular_id)+" · "+partes.join(" + "),valor:f.valor,st:st(dia)}); });
+    itens.push({dia,tipo:"despesa",icone:"credit-card",desc:"Fatura "+(c.instituicao||"")+" · "+c.nome+(f.atual&&!f.estimado&&!f.parcelas?"":" (prevista)"),meta:nomeMembro(c.titular_id)+" · "+partes.join(" + "),valor:f.valor,rec:"fat:"+c.id,recMes:mesKeyOff(o),recPago:false,semEditar:true,st:(o===0&&dia<=hd)?"em aberto":st(dia)}); });
   // lançamentos futuros já registrados (parcelas no cartão são informativas: já estão somadas na fatura acima)
   const hojeIso=iso(hoje);
   filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=r.fim&&(o>0||l.data>hojeIso)&&!ehInterno(l)).forEach(l=>{
@@ -1460,7 +1467,7 @@ function secMes(){
       <div class="item${i.st==="passou"?" passou":""}">
         <div class="dot date"><b>${i.dia}</b><small>${r.curto}</small></div>
         <div><div class="t"><span class="ti">${ic(i.icone,"ico",15)}</span>${esc(i.desc)}</div><div class="m">${esc(i.meta)}</div></div>
-        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-rmes="${i.recMes}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"marcar pago"}</button> <button class="link" style="font-size:.75rem" data-cad-edit="despesas_fixas" data-id="${esc(i.rec)}">editar</button>`:""}</div>
+        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-rmes="${i.recMes}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"marcar pago"}</button> ${i.semEditar?"":`<button class="link" style="font-size:.75rem" data-cad-edit="despesas_fixas" data-id="${esc(i.rec)}">editar</button>`}`:""}</div>
       </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nenhuma conta cadastrada. Clique em <b>Nova conta</b> (luz, água, financiamento, empréstimo…).</div>`}</div>`}
   </section>`;
 }
