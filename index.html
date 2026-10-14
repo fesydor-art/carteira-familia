@@ -866,7 +866,8 @@ function recorrentesDetectados(){
     const desc=u.descricao.split("|").map(x=>x.trim()).filter(Boolean).pop();
     out.push({id:"auto:"+k, descricao:(/parcela paga/i.test(u.descricao)?"Empréstimo · ":/votorantim/i.test(u.descricao)?"Financiamento · ":"")+desc,
       valor:Number(u.valor), dia:Number(u.data.slice(8,10)), parcelas_restantes:null, origem:"auto", auto:true,
-      grupo_id:u.grupo_id||null, titular_id:u.user_id, categoria_id:null, pagoMes0:meses.has(mesAt)});
+      grupo_id:u.grupo_id||null, titular_id:u.user_id, categoria_id:null, chave:k,
+      pagoMes0:meses.has(mesAt) || (((S.proj&&S.proj.pagos)||{})[k]===mesAt)});
   });
   return S._rec=out;
 }
@@ -1243,6 +1244,10 @@ function desenharProj(){
     sim.meses.map(l=>`<tr><td>${l.label}${l.m===0?" <span class=\"pill\">resto do mês</span>":""}</td><td>${brl(l.rec)}</td><td>${brl(l.gas)}</td><td style="color:${l.sobra<0?"var(--neg)":"var(--pos)"}">${brl(l.sobra)}</td><td style="font-weight:600;color:${l.saldo<0?"var(--neg)":"inherit"}">${brl(l.saldo)}</td></tr>`).join("")}</tbody>`;
 }
 let tSalvar;
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-rec-pago]"); if(!b) return;
+  const mes=iso(new Date()).slice(0,7); S.proj.pagos={...(S.proj.pagos||{})};
+  if(b.dataset.v==="1") S.proj.pagos[b.dataset.recPago]=mes; else delete S.proj.pagos[b.dataset.recPago];
+  S._rec=null; salvarProj(); render(); toast(b.dataset.v==="1"?"Marcado como pago este mês":"Voltou para a pagar"); });
 function salvarProj(){
   clearTimeout(tSalvar); const st=$("#pj-status"); if(st) st.textContent="Salvando…";
   tSalvar=setTimeout(async()=>{
@@ -1421,6 +1426,7 @@ function contasDoMes(o=S.mes){
   filtro(despesasTodas()).forEach(x=>{ const dia=Math.min(x.dia,r.ult), R=vazio(x.parcelas_restantes)?null:Number(x.parcelas_restantes);
     if(x.auto){ const pago=o===0&&x.pagoMes0;
       itens.push({dia,tipo:"despesa",icone:"landmark",desc:x.descricao,meta:nomeMembro(x.titular_id)+" · todo mês (achado no extrato)",valor:Number(x.valor),info:pago,
+        rec:o===0?x.chave:null, recPago:pago,
         st: pago?"pago": (o===0&&dia<=hd)?"em aberto":st(dia)}); return; }
     const idx = (dia>hd ? o+1 : o); // ocorrência nº idx das restantes
     if(R!==null && o===0 && dia<=hd){ if(R<0) return; }
@@ -1458,7 +1464,7 @@ function secMes(){
       <div class="item${i.st==="passou"?" passou":""}">
         <div class="dot date"><b>${i.dia}</b><small>${r.curto}</small></div>
         <div><div class="t"><span class="ti">${ic(i.icone,"ico",15)}</span>${esc(i.desc)}</div><div class="m">${esc(i.meta)}</div></div>
-        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span></div>
+        <div class="r"><div class="amt ${i.info?"":i.tipo==="receita"?"pos":"neg"}" ${i.info?'style="color:var(--muted);font-weight:500"':""}>${i.tipo==="receita"?"+":"−"} ${brl(i.valor)}</div><span class="pill">${i.st}</span>${i.rec?`<button class="link" style="font-size:.75rem" data-rec-pago="${esc(i.rec)}" data-v="${i.recPago?0:1}">${i.recPago?"desfazer":"já paguei"}</button>`:""}</div>
       </div>`).join(""):`<div class="empty">${ic("calendar-days")} Nada previsto. Cadastre salários e gastos fixos em Cadastros.</div>`}</div>`}
   </section>`;
 }
