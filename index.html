@@ -605,15 +605,19 @@ const TIPOS = {corrente:"Conta corrente",poupanca:"Poupança",investimento:"Inve
 const BANDEIRAS = ["visa","mastercard","elo","amex","hipercard","outra"];
 
 function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.setAttribute("role","status"); t.innerHTML=ic("circle-check","ico",17)+`<span>${esc(msg)}</span>`; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
+/* perfil "separado": não entra no filtro de cada pessoa (padrão: perfis de aluguel). Configuração compartilhada pelo casal. */
+function separado(g){ const m=(typeof marca==="function")?marca("sep:"+g.id,"cfg"):null; return m!==null&&m!==undefined ? m : /alug/i.test(g.nome||""); }
 /* filtro do topo: "todos", "p:<usuário>" ou "g:<grupo>" */
 function filtro(arr, key="titular_id"){
   const [t,id]=S.pessoa.split(":");
   if(t==="g") return arr.filter(x=>x.grupo_id===id);
   // perfis privados (ex.: IPTV) ficam separados: não entram em "Todos" nem no filtro por pessoa
   const priv=new Set((S.grupos||[]).filter(g=>g.privado).map(g=>g.id));
+  const sep=new Set((S.grupos||[]).filter(g=>!g.privado&&separado(g)).map(g=>g.id));
   const fora=x=>x&&x.grupo_id&&priv.has(x.grupo_id);
   if(S.pessoa==="todos") return arr.filter(x=>!fora(x));
-  return arr.filter(x=>x[key]===id && !fora(x));
+  // filtro da pessoa = dinheiro pessoal: perfis separados (ex.: aluguel) ficam de fora
+  return arr.filter(x=>x[key]===id && !fora(x) && !(x&&x.grupo_id&&sep.has(x.grupo_id)));
 }
 const parcTxt = x => x.parcela_total>1 ? `${x.parcela_num}/${x.parcela_total}` : ((x.descricao||"").match(/\((\d+\/\d+)\)$/)||[])[1]||"";
 function grupoPadrao(){ if(S.pessoa.startsWith("g:")) return S.pessoa.slice(2); return (S.grupos.find(g=>/casal/i.test(g.nome))||S.grupos[0]||{}).id||""; }
@@ -763,6 +767,7 @@ function render(){
         ${S.grupos.length?`<span class="sep" aria-hidden="true"></span>`:""}
         ${S.grupos.map(g=>`<button class="chip" data-p="g:${g.id}" aria-pressed="${S.pessoa==="g:"+g.id}"><span style="color:${esc(g.cor||"currentColor")};display:inline-flex">${ic(g.icone,"ico",15)}</span> ${esc(g.nome)}${g.privado?` <span title="Privado: só você vê" style="display:inline-flex;opacity:.7">${ic("lock","ico",12)}</span>`:""}</button>`).join("")}
       </div>
+      ${S.pessoa.startsWith("p:")&&S.grupos.some(g=>!g.privado&&separado(g))?`<p class="muted nota" style="margin-top:-8px">${ic("split","ico",13)} Só o dinheiro pessoal de ${esc(nomeMembro(S.pessoa.slice(2)))}. Fora deste filtro: ${S.grupos.filter(g=>!g.privado&&separado(g)).map(g=>`<button class="link" data-p="g:${g.id}">${esc(g.nome)}</button>`).join(", ")} · <button class="link" data-tab="cad">mudar</button></p>`:""}
       ${resumo?`<section class="summary" aria-label="Resumo">
         <div class="tot"><span class="hd">${ic("wallet","ico",15)}<span class="label">Saldo total</span></span><span class="v">${brlV(disp+invest)}</span><span class="s">disponível + investido</span></div>
         <div><span class="hd">${ic("banknote","ico",15)}<span class="label">Disponível</span></span><span class="v">${brlV(disp)}</span><span class="s">${brl(especie)} em espécie</span></div>
@@ -898,8 +903,8 @@ function secAjustes(){
         nc=S.contas.filter(x=>x.grupo_id===g.id).length+S.cartoes.filter(x=>x.grupo_id===g.id).length;
       const n=[pl(nr,"renda","rendas"),pl(nd,"gasto fixo","gastos fixos"),pl(nc,"conta/cartão","contas/cartões")].join(" · ");
       return `<div class="item"><div class="dot" style="background:color-mix(in srgb,${esc(g.cor||"#64748b")} 16%,transparent);color:${esc(g.cor||"#64748b")}">${ic(g.icone)}</div>
-      <div><div class="t">${esc(g.nome)}${g.privado?` <span class="pill">${ic("lock","ico",11)} privado · só você vê</span>`:""}</div><div class="m">${n}</div></div>
-      <div class="r"><button class="iconbtn sm" data-cad-edit="grupos" data-id="${g.id}" aria-label="Editar ${esc(g.nome)}" title="Editar">${ic("pencil","ico",14)}</button></div></div>`; }).join("")||`<div class="empty">${ic("circle-plus")} Nenhum perfil. Crie “Casal” e “Aluguéis”.</div>`}</div>
+      <div><div class="t">${esc(g.nome)}${g.privado?` <span class="pill">${ic("lock","ico",11)} privado · só você vê</span>`:separado(g)?` <span class="pill">${ic("split","ico",11)} separado · fora do saldo de cada pessoa</span>`:""}</div><div class="m">${n}</div></div>
+      <div class="r" style="flex-direction:row;align-items:center;gap:6px">${g.privado?"":`<button class="btn ghost sm" data-sep="${g.id}" data-v="${separado(g)?0:1}" title="Quando separado, o dinheiro deste perfil não aparece no filtro de cada pessoa (só em Todos e no próprio perfil)">${separado(g)?"Juntar":"Separar"}</button>`}<button class="iconbtn sm" data-cad-edit="grupos" data-id="${g.id}" aria-label="Editar ${esc(g.nome)}" title="Editar">${ic("pencil","ico",14)}</button></div></div>`; }).join("")||`<div class="empty">${ic("circle-plus")} Nenhum perfil. Crie “Casal” e “Aluguéis”.</div>`}</div>
     <div class="label" style="margin-top:8px">Convidar pessoa</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="invite">${esc(S.fam.codigo_convite)}</span><button class="btn ghost sm" id="copiar">${ic("copy","ico",14)} Copiar</button></div>
     <p class="muted" style="margin:0">A pessoa cria a conta dela no app (Google ou e-mail), escolhe "Entrar com código de convite" e digita esse código. Ela aparece aqui e no filtro do topo.</p>
@@ -1724,6 +1729,9 @@ function ligarInicio(){
     S.tab="lanc"; render(); });
 }
 /* marcar/desmarcar (círculo) com desfazer */
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-sep]"); if(!b) return;
+  const g=S.grupos.find(x=>x.id===b.dataset.sep); marcar("sep:"+b.dataset.sep,"cfg",b.dataset.v==="1"); render();
+  toast(b.dataset.v==="1"?`${g?g.nome:"Perfil"} fora do saldo de cada pessoa`:`${g?g.nome:"Perfil"} volta a somar no saldo de cada pessoa`); });
 document.addEventListener("click",e=>{ const b=e.target.closest("[data-chk]"); if(!b) return;
   const key=b.dataset.chk, mk=b.dataset.mk, v=b.dataset.v==="1", k=key+"|"+mk, ant=(S.proj.pagos||{})[k], rec=b.dataset.tipo==="receita";
   marcar(key,mk,v); S._pop=v?k:null; render(); S._pop=null;
