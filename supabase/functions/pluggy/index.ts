@@ -211,6 +211,7 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
         valor: Math.round(Number(parcela) * 100) / 100,
         dia: dia(L.firstInstallmentDueDate) || dia(pagos[0]?.paidDate) || 10,
         parcelas_restantes: rest, origem: "pluggy", pluggy_loan_id: L.id, saldo_devedor: saldo, ativo: true,
+        criado_em: new Date().toISOString(), // as parcelas restantes contam a partir deste mês
       };
       const ex = await sb.from("despesas_fixas").select("id").eq("pluggy_loan_id", L.id).maybeSingle();
       if (!ex.data) { row.grupo_id = casal; row.categoria_id = contasFixas; }
