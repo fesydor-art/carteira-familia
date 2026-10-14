@@ -1029,11 +1029,11 @@ function faturasPrevistas(nMeses,aj=1){
   const hoje=new Date(); hoje.setHours(12,0,0,0); const hd=hoje.getDate(), p=S.proj, hj=iso(hoje);
   const est=divisaoVariavel(), out={};
   filtro(S.cartoes).forEach(c=>{
-    const media=est.cartao[c.id]||0, f={}, banco=c.origem==="pluggy"||!!c.pluggy_account_id;
+    const media=est.cartao[c.id]||0, f={}, banco=(c.origem==="pluggy"||!!c.pluggy_account_id)&&!!Number(c.dia_vencimento);   // sem dia de vencimento não dá para montar o ciclo
     const tx=S.lanc.filter(l=>l.cartao_id===c.id);
     for(let m=0;m<nMeses;m++){
       const inf=Math.pow(1+Number(p.inflacao)/100,m/12), cy=cicloFatura(c,m);
-      if(banco && cy){
+      if(banco){
         if(cy.vence<hj) continue;                                  // já venceu
         const itens=tx.filter(l=>l.data>cy.ini&&l.data<=cy.fim);
         const soma=a=>a.reduce((s,l)=>s+Number(l.valor),0);
@@ -1053,6 +1053,7 @@ function faturasPrevistas(nMeses,aj=1){
     if(!banco){ const md=mesFaturaAtual(c,hd);
       tx.filter(l=>l.data>hj&&l.tipo==="despesa"&&!ehInterno(l)).forEach(l=>{ const m=Math.max(md,mesPagamento(c,l.data,hoje)); if(f[m]){ f[m].parcelas+=Number(l.valor); f[m].itens.push(l); } });
       Object.values(f).forEach(x=>{ x.total=x.compras+x.parcelas+x.estimado; x.valor=x.total; }); }
+    Object.values(f).forEach(x=>{ ["compras","parcelas","creditos","pagoBanco","estimado","total","valor"].forEach(k=>{ x[k]=Number(x[k]); if(!isFinite(x[k])) x[k]=0; }); });
     Object.entries(f).forEach(([m,x])=>{ const mm=marca("fat:"+c.id, mesKeyOff(Number(m)));
       x.paga = mm!==null ? mm : x.autoPaga; x.pagaValor=x.total; });
     out[c.id]=f;
@@ -1544,6 +1545,7 @@ function agenda(nMeses, aj=1){
     const inf=Math.pow(1+Number(p.inflacao)/100,m/12);
     const add=e=>{ const mm=marca(e.key,mk), a= e.autoPago!==undefined ? !!e.autoPago : m===0&&!!(e.autoId&&auto[e.autoId]);
       e.pago= mm!==null?mm:a; e.auto= mm===null&&a; e.autoL= e.auto?(e.autoL||auto[e.autoId]):null;
+      e.valor=Number(e.valor); if(!isFinite(e.valor)) e.valor=0;
       e.m=m; e.mk=mk; e.dia=Math.min(Math.max(1,Number(e.dia)||last),last);
       e.atrasada= m===0&&!e.pago&&e.dia<hd; e.hoje= m===0&&!e.pago&&e.dia===hd; ev.push(e); };
     filtro(S.rendas).forEach(x=>{
