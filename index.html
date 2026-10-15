@@ -788,7 +788,7 @@ function render(){
       ${S.pessoa.startsWith("p:")&&S.grupos.some(g=>!g.privado&&separado(g))?`<p class="muted nota" style="margin-top:-8px">${ic("split","ico",13)} Só o dinheiro pessoal de ${esc(nomeMembro(S.pessoa.slice(2)))}. Fora deste filtro: ${S.grupos.filter(g=>!g.privado&&separado(g)).map(g=>`<button class="link" data-p="g:${g.id}">${esc(g.nome)}</button>`).join(", ")} · <button class="link" data-tab="cad">mudar</button></p>`:""}
       ${resumo?`<section class="summary" aria-label="Resumo">
         <div class="tot"><span class="hd">${ic("wallet","ico",15)}<span class="label">Saldo total</span></span><span class="v">${brlV(disp+invest)}</span><span class="s">disponível + investido</span></div>
-        <div><span class="hd">${ic("banknote","ico",15)}<span class="label">Disponível</span></span><span class="v">${brlV(disp)}</span><span class="s">${brl(especie)} em espécie</span></div>
+        <div><span class="hd">${ic("banknote","ico",15)}<span class="label">Disponível</span></span><span class="v">${brlV(disp)}</span><span class="s">${brl(especie)} em espécie · <button class="link" data-dinheiro>lançar dinheiro</button></span></div>
         <div><span class="hd">${ic("trending-up","ico",15)}<span class="label">Investido</span></span><span class="v" style="color:var(--pos)">${brlV(invest)}</span><span class="s">${nInv} ${nInv===1?"aplicação":"aplicações"}</span></div>
         <div><span class="hd">${ic("credit-card","ico",15)}<span class="label">Limite disponível</span></span><span class="v">${brlV(limDisp)}</span><span class="s">de ${brl(limTot)}</span></div>
         <button class="tile-lk" data-ir-lista><span class="hd">${ic("list-checks","ico",15)}<span class="label">Falta pagar · ${mesRef(oT).curto}</span></span><span class="v" style="color:${faltaPagar>0?"var(--neg)":"var(--pos)"}">${brlV(faltaPagar)}</span><span class="s">${agT.length?`${agT.length} ${agT.length===1?"conta pendente":"contas pendentes"} · ver lista`:"tudo pago"}</span></button>
@@ -1807,6 +1807,37 @@ function toastAcao(msg,label,fn){
   setTimeout(()=>t.remove(),6000);
 }
 
+/* ---------- dinheiro em espécie: cria a carteira na primeira vez, depois lança entrada/saída ---------- */
+function modalDinheiro(){
+  const cart=S.contas.find(c=>c.tipo==="dinheiro"&&c.titular_id===S.user.id)||S.contas.find(c=>c.tipo==="dinheiro");
+  if(cart){
+    return abrir(`<h2>Dinheiro em espécie</h2>
+      <p class="muted" style="margin:0">${esc(cart.nome)} · saldo ${brl(cart.saldo)}</p>
+      <div class="grid2"><button class="btn" data-din="despesa">${ic("arrow-up-right","ico",16)} Gastei</button><button class="btn ghost" data-din="receita">${ic("arrow-down-left","ico",16)} Recebi</button></div>
+      <button class="link" style="align-self:flex-start" data-din-ajuste>Corrigir o saldo da carteira</button>`, ()=>{
+      document.querySelectorAll("[data-din]").forEach(b=>b.onclick=()=>{ fechar(); modalLanc({orig:"conta:"+cart.id,tipo:b.dataset.din,grp:cart.grupo_id}); });
+      $("[data-din-ajuste]").onclick=()=>{ fechar(); modalConta(cart); };
+    });
+  }
+  const me=meuMembro();
+  abrir(`<h2>Criar carteira de dinheiro</h2>
+    <form id="fdin" style="display:flex;flex-direction:column;gap:12px">
+      <p class="muted" style="margin:0">Para controlar o dinheiro vivo. Depois é só tocar em "Gastei" ou "Recebi".</p>
+      <label class="field"><span>Nome</span><input id="din-nome" required value="Carteira ${esc((me.nome||"").split(" ")[0])}"></label>
+      <label class="field"><span>Quanto você tem na mão hoje? (R$)</span><input id="din-val" type="number" step="0.01" min="0" inputmode="decimal" value="0"></label>
+      ${S.grupoOK?`<label class="field"><span>Perfil</span><select id="din-grp">${optsGrupos(grupoPadrao())}</select></label>`:""}
+      <div class="err" id="din-err"></div>
+      <div class="row-end"><button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Criar carteira</button></div>
+    </form>`, ()=>{
+    $("#fdin").onsubmit=async e=>{ e.preventDefault();
+      const di=S.inst.find(i=>/dinheiro/i.test(i.nome));
+      const row={familia_id:S.fam.id,nome:$("#din-nome").value.trim(),tipo:"dinheiro",titular_id:S.user.id,instituicao_id:di?di.id:null,saldo_inicial:Number($("#din-val").value||0)};
+      if(S.grupoOK) row.grupo_id=$("#din-grp").value||null;
+      const r=await sb.from("contas").insert(row); if(r.error) return $("#din-err").textContent=r.error.message;
+      fechar(); await carregar(); render(); toast("Carteira criada"); modalDinheiro(); };
+  });
+}
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-dinheiro]"); if(!b) return; setTimeout(modalDinheiro,0); });
 /* ---------- modais simples: conta a pagar e entrada ---------- */
 function modalPagar(x){
   const ed=!!x, o=Math.max(0,S.mes), mkSel=mesKeyOff(o), rM=mesRef(o);
@@ -1826,9 +1857,9 @@ function modalPagar(x){
         <button type="button" data-rep="uma" aria-pressed="${rep0==="uma"}">Só em ${rM.nome}</button>
         <button type="button" data-rep="parc" aria-pressed="${rep0==="parc"}">Parcelado</button></div></div>
       <label class="field" id="pg-parc-w" ${rep0==="parc"?"":"hidden"}><span>Quantas parcelas faltam, contando a de ${rM.nome}?</span><input id="pg-parc" type="number" min="1" max="600" value="${faltam0}"></label>
+      <div class="grid2">${S.grupoOK?`<label class="field"><span>Perfil</span><select id="pg-grp">${optsGrupos(x.grupo_id)}</select></label>`:""}
+        <label class="field"><span>Quem paga</span><select id="pg-tit">${optsMembros(x.titular_id)}</select></label></div>
       <details class="mais"><summary>Mais opções</summary><div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">
-        <div class="grid2"><label class="field"><span>Responsável</span><select id="pg-tit">${optsMembros(x.titular_id)}</select></label>
-          ${S.grupoOK?`<label class="field"><span>Perfil</span><select id="pg-grp">${optsGrupos(x.grupo_id)}</select></label>`:""}</div>
         <label class="field"><span>Categoria</span><select id="pg-cat"><option value="">—</option>${S.cats.map(c=>`<option value="${c.id}" ${c.id===x.categoria_id?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></label>
       </div></details>
       <div class="err" id="pg-err"></div>
@@ -1864,14 +1895,19 @@ function modalEntrada(x){
         <label class="field"><span>Cai dia</span><input id="en-dia" type="number" min="1" max="31" required value="${x.dia||""}"></label>
       </div>
       <label class="check" id="en-13-w" ${x.tipo==="salario"?"":"hidden"}><input type="checkbox" id="en-13" ${x.recebe_13?"checked":""}> Recebe 13º em dezembro</label>
-      <details class="mais"><summary>Mais opções</summary><div class="grid2" style="margin-top:10px">
-        <label class="field"><span>Quem recebe</span><select id="en-tit">${optsMembros(x.titular_id)}</select></label>
-        ${S.grupoOK?`<label class="field"><span>Perfil</span><select id="en-grp">${optsGrupos(x.grupo_id)}</select></label>`:""}</div></details>
+      <div class="grid2">
+        ${S.grupoOK?`<label class="field"><span>Perfil (de onde vem)</span><select id="en-grp">${optsGrupos(x.grupo_id)}</select></label>`:""}
+        <label class="field"><span>Quem recebe na conta</span><select id="en-tit">${optsMembros(x.titular_id)}</select></label></div>
+      <p class="muted" style="margin:-4px 0 0;font-size:.78rem">Ex.: aluguel da casa → Perfil "Aluguel…", e quem recebe é quem tem a conta onde o dinheiro cai.</p>
       <div class="err" id="en-err"></div>
       <div class="row-end">${ed?`<button type="button" class="btn ghost" id="en-del">Excluir</button>`:""}<button type="button" class="btn ghost" data-close>Cancelar</button><button class="btn">Salvar</button></div>
     </form>`, ()=>{
     let tp=x.tipo==="salario"||x.tipo==="aluguel"?x.tipo:"outros";
-    document.querySelectorAll("[data-tp]").forEach(b=>b.onclick=()=>{ tp=b.dataset.tp; document.querySelectorAll("[data-tp]").forEach(z=>z.setAttribute("aria-pressed",z===b)); $("#en-13-w").hidden=tp!=="salario"; });
+    const gAlug=S.grupos.find(g=>/alug/i.test(g.nome));
+    document.querySelectorAll("[data-tp]").forEach(b=>b.onclick=()=>{ tp=b.dataset.tp; document.querySelectorAll("[data-tp]").forEach(z=>z.setAttribute("aria-pressed",z===b)); $("#en-13-w").hidden=tp!=="salario";
+      if(tp==="aluguel" && gAlug && $("#en-grp") && !ed) $("#en-grp").value=gAlug.id;
+      if(!ed && !$("#en-nome").value.trim()) $("#en-nome").placeholder= tp==="aluguel"?"Aluguel casinha":tp==="salario"?"Salário Felipe":"Outra entrada"; });
+    if(!ed && S.pessoa.startsWith("g:") && $("#en-grp")){ $("#en-grp").value=S.pessoa.slice(2); if(gAlug&&S.pessoa.slice(2)===gAlug.id) document.querySelector('[data-tp="aluguel"]').click(); }
     if(ed) $("#en-del").onclick=async e=>{ const b=e.currentTarget; if(b.dataset.c!=="1"){ b.dataset.c="1"; b.textContent="Confirmar exclusão"; b.style.color="var(--neg)"; return; }
       const r=await sb.from("rendas").delete().eq("id",x.id); if(r.error) return $("#en-err").textContent=r.error.message; fechar(); await carregar(); render(); toast("Entrada excluída"); };
     $("#fen").onsubmit=async e=>{ e.preventDefault();
@@ -2005,7 +2041,7 @@ function modalCartao(c){
     });
 }
 
-function modalLanc(){
+function modalLanc(pre={}){
   if(!S.contas.length && !S.cartoes.length){ toast("Cadastre uma conta ou cartão primeiro"); return modalConta(); }
   let tipo="despesa";
   const origens=[...S.contas.map(c=>({v:"conta:"+c.id,t:`${c.nome} (${nomeMembro(c.titular_id)})`,din:c.tipo==="dinheiro"})),
@@ -2018,6 +2054,7 @@ function modalLanc(){
       <label class="field"><span>Valor (R$)</span><input id="l-val" type="number" step="0.01" min="0.01" inputmode="decimal" required style="font-size:1.4rem;font-family:var(--f-display)"></label>
       <label class="field"><span>Descrição</span><input id="l-desc" required placeholder="Lanche"></label>
       <label class="field"><span>De onde saiu / entrou</span><select id="l-orig">${origens.map(o=>`<option value="${o.v}">${esc(o.t)}</option>`).join("")}</select></label>
+      ${S.contas.some(c=>c.tipo==="dinheiro")?"":`<button type="button" class="link" style="align-self:flex-start;margin-top:-6px" data-close data-dinheiro>${ic("banknote","ico",13)} Criar carteira de dinheiro em espécie</button>`}
       <div class="grid2">
         <label class="field"><span>Categoria</span><select id="l-cat">${S.cats.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select></label>
         <label class="field"><span>Perfil</span><select id="l-grp">${optsGrupos(grupoPadrao())}</select></label>
@@ -2035,6 +2072,8 @@ function modalLanc(){
     </form>`, ()=>{
       const set=t=>{tipo=t;$("#t-d").setAttribute("aria-pressed",t==="despesa");$("#t-r").setAttribute("aria-pressed",t==="receita");};
       $("#t-d").onclick=()=>set("despesa"); $("#t-r").onclick=()=>set("receita"); $("#l-val").focus();
+      if(pre.orig) $("#l-orig").value=pre.orig; if(pre.tipo) set(pre.tipo);
+      if(pre.grp && $("#l-grp")) $("#l-grp").value=pre.grp;
       let ehTotal=true;
       const parcelas=()=>{ const n=Number($("#l-np").value), v=Number($("#l-val").value)||0, tot=ehTotal?v:v*n;
         const base=Math.floor(tot/n*100)/100, ult=Math.round((tot-base*(n-1))*100)/100;
