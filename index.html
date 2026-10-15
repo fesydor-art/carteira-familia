@@ -392,6 +392,19 @@ table.tb{border-collapse:collapse;width:100%;font-size:.84rem}
   .tv .st{max-width:118px;overflow:hidden;text-overflow:ellipsis}}
 details.mais summary{cursor:pointer;font-weight:600;font-size:.86rem;color:var(--accent)}
 .toast .toast-act{border:0;background:none;color:inherit;font-weight:700;text-decoration:underline;padding:0 0 0 6px;opacity:.9}
+
+.real-g{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.real-g.sem-saldo{grid-template-columns:repeat(3,minmax(0,1fr))}
+.real-g .b{display:flex;flex-direction:column;gap:5px;padding:12px 14px;border-radius:12px;background:var(--surface-2);min-width:0}
+.real-g .b .label{display:flex;gap:6px;align-items:center}
+.real-g .b .v{font-size:1.3rem;font-weight:650;letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
+.real-g .b .v.pos{color:var(--pos)}.real-g .b .v.neg{color:var(--neg)}
+.real-g .b .s{font-size:.76rem;color:var(--muted)}
+.real-g .saldo{background:linear-gradient(135deg,#312E81,#4C1D95);color:#fff}
+.real-g .saldo .label,.real-g .saldo .s{color:rgba(255,255,255,.8)}
+.real-g .res.pos{background:var(--pos-soft)}.real-g .res.pos .v{color:var(--pos)}
+.real-g .res.neg{background:var(--neg-soft)}.real-g .res.neg .v{color:var(--neg)}
+@media (max-width:760px){.real-g,.real-g.sem-saldo{grid-template-columns:1fr 1fr}.real-g .saldo,.real-g .res{grid-column:1/-1}.real-g .b .v{font-size:1.12rem}}
 </style>
 </head>
 <body>
@@ -775,7 +788,7 @@ function render(){
         <div><span class="hd">${ic("credit-card","ico",15)}<span class="label">Limite disponível</span></span><span class="v">${brlV(limDisp)}</span><span class="s">de ${brl(limTot)}</span></div>
         <button class="tile-lk" data-ir-lista><span class="hd">${ic("list-checks","ico",15)}<span class="label">Falta pagar · ${mesRef(oT).curto}</span></span><span class="v" style="color:${faltaPagar>0?"var(--neg)":"var(--pos)"}">${brlV(faltaPagar)}</span><span class="s">${agT.length?`${agT.length} ${agT.length===1?"conta pendente":"contas pendentes"} · ver lista`:"tudo pago"}</span></button>
       </section>`:""}
-      ${S.tab==="geral" ? secPassos()+secResumoMes()+`<div class="home-grid">${secChecklist()}${secFechamento()}</div>` : ""}
+      ${S.tab==="geral" ? secPassos()+secMesReal()+secResumoMes()+`<div class="home-grid">${secChecklist()}${secFechamento()}</div>` : ""}
       ${S.tab==="geral"||S.tab==="cartoes" ? secCartoes(cartoes) : ""}
       ${S.tab==="cartoes" ? secFaturas() : ""}
       ${S.tab==="geral" ? `${secLanc(8)}${secContas(contas)}` : ""}
@@ -1618,6 +1631,38 @@ function secPassos(){
       <b>${p.t}</b><span class="muted">${p.d}</span>${p.ok?"":p.a}</div>`).join("")}</div></section>`;
 }
 
+/* ---------- INÍCIO: o mês até agora (saldo que já tem + o que entrou e saiu de verdade) ---------- */
+function calcMesReal(o=S.mes){
+  const r=mesRef(o), hj=iso(new Date()), fim=o<0?r.fim:hj;
+  const ls=filtro(S.lanc,"user_id").filter(l=>l.data>=r.ini&&l.data<=fim);
+  const soma=a=>a.reduce((s,l)=>s+Number(l.valor),0);
+  const ent=ls.filter(l=>l.tipo==="receita"&&!l.cartao_id&&!ehInterno(l));
+  const saiConta=ls.filter(l=>l.tipo==="despesa"&&!l.cartao_id&&!ehInterno(l));
+  const saiCartao=ls.filter(l=>l.tipo==="despesa"&&l.cartao_id&&!ehPagCartao(l));
+  const estornos=ls.filter(l=>l.tipo==="receita"&&l.cartao_id&&!ehPagCartao(l));
+  const E=soma(ent), SC=soma(saiConta), SK=Math.max(0,soma(saiCartao)-soma(estornos));
+  return {r,ent,saiConta,saiCartao,E,SC,SK,S:SC+SK};
+}
+function secMesReal(){
+  const o=S.mes; if(o>0) return "";
+  const x=calcMesReal(o), sobra=x.E-x.S, saldo=liquidoAtual();
+  const maiores=[...x.saiConta,...x.saiCartao].sort((a,b)=>b.valor-a.valor).slice(0,6);
+  const pctSai=x.E>0?Math.min(100,x.S/x.E*100):(x.S>0?100:0);
+  return `<section class="panel real" id="mes-real">
+    <div class="sec-h"><h2>${o===0?`${cap(x.r.nome)} até agora`:`${cap(x.r.nome)} ${x.r.ano}`}</h2><span class="pill">${o===0?"o que já aconteceu":"mês encerrado"}</span></div>
+    <div class="real-g${o===0?"":" sem-saldo"}">
+      ${o===0?`<div class="b saldo"><span class="label">${ic("wallet","ico",13)} Saldo hoje</span><span class="v">${brl(saldo)}</span><span class="s">o que você tem nas contas</span></div>`:""}
+      <div class="b"><span class="label">${ic("arrow-down-left","ico",13)} Entrou no mês</span><span class="v pos">${brl(x.E)}</span><span class="s">${x.ent.length} ${x.ent.length===1?"entrada":"entradas"}</span></div>
+      <div class="b"><span class="label">${ic("arrow-up-right","ico",13)} Saiu no mês</span><span class="v neg">${brl(x.S)}</span><span class="s">${brl(x.SC)} na conta · ${brl(x.SK)} no cartão</span></div>
+      <div class="b res ${sobra<0?"neg":"pos"}"><span class="label">${ic(sobra<0?"trending-down":"trending-up","ico",13)} Sobra do mês</span><span class="v">${brl(sobra)}</span><span class="s">${x.E>0?`${sobra<0?"gastou "+Math.round(x.S/x.E*100)+"% do que entrou":"guardou "+Math.round(sobra/x.E*100)+"% do que entrou"}`:"entrou − saiu"}</span></div>
+    </div>
+    <div class="bar" aria-hidden="true" title="Quanto do que entrou já saiu"><i class="${pctSai>=100?"over":pctSai>=85?"hot":""}" style="width:${pctSai.toFixed(1)}%"></i></div>
+    ${maiores.length?`<details class="quebra"><summary>Maiores saídas do mês</summary><div class="list">${maiores.map(l=>`<div class="item"><div class="dot">${ic(l.cartao_id?"credit-card":"arrow-up-right")}</div>
+      <div><div class="t">${esc(l.descricao.split("|").map(t=>t.trim()).filter(Boolean).pop()||l.descricao)}</div><div class="m">${dt(l.data)} · ${l.cartao_id?"cartão":"conta"}</div></div>
+      <div class="r"><div class="amt neg">− ${brl(l.valor)}</div></div></div>`).join("")}</div></details>`:""}
+    <p class="muted nota">${ic("info","ico",13)} Saiu = débito, Pix e boletos da conta + compras no cartão (no dia da compra). Pagamento de fatura, aplicações e Pix entre suas contas não contam, para não somar duas vezes. <button class="link" data-tab="lanc">Ver extrato</button></p>
+  </section>`;
+}
 /* ---------- INÍCIO: resumo do mês em forma de conta ---------- */
 function secResumoMes(){
   const o=S.mes, r=mesRef(o);
@@ -1645,7 +1690,7 @@ function secResumoMes(){
   else aviso=`<div class="callout pos">${ic("circle-check","ico",16)}<span>${o===0?"Pagando tudo que falta":"Pagando tudo"}, ${o===0?"ainda vão sobrar":"sobram"} <b>${brl(fim)}</b> no fim de ${r.nome}.</span></div>`;
   const L= o===0 ? ["Saldo hoje","Ainda vai entrar","Ainda vai sair","Fim do mês"] : ["Começa com","Vai entrar","Vai sair","Fecha em"];
   return `<section class="panel hero" id="resumo">
-    <div class="sec-h"><h2>${cap(r.nome)} ${r.ano}</h2><span class="pill">${o===0?"hoje é dia "+hd:"previsão"}</span></div>
+    <div class="sec-h"><h2>${o===0?"Previsão até o fim do mês":`${cap(r.nome)} ${r.ano}`}</h2><span class="pill">${o===0?"hoje é dia "+hd:"previsão"}</span></div>
     <div class="eq">
       <div class="b"><span class="label">${L[0]}</span><span class="v">${brl(ini)}</span></div><span class="op">+</span>
       <button class="b lk" data-lista="receber"><span class="label">${L[1]}</span><span class="v pos">${brl(m.rec)}</span></button><span class="op">−</span>
