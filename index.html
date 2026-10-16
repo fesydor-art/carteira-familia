@@ -448,6 +448,32 @@ details.cgrp+.item,.item+details.cgrp,details.cgrp+details.cgrp{border-top:1px s
 details.pj-prem>summary{cursor:pointer;list-style:none}
 details.pj-prem>summary::-webkit-details-marker{display:none}
 details.pj-prem[open]>summary{margin-bottom:14px}
+
+.rel-out{display:flex;flex-direction:column;gap:20px}
+.rel-chart{width:100%;height:auto;max-height:220px}
+.rel-chart .b-e{fill:var(--pos);opacity:.85}.rel-chart .b-s{fill:var(--neg);opacity:.75}
+.rel-chart text{font-size:11px;fill:var(--muted)}
+.leg .le{background:var(--pos)}.leg .ls{background:var(--neg)}
+.tb td.pos{color:var(--pos)}.tb td.neg{color:var(--neg)}
+.tb tr.tot td{font-weight:700;border-top:2px solid var(--line)}
+.tb tr.sep td{padding:2px;border:0}
+.tb tr.int td{opacity:.55}
+.cat-bars{display:flex;flex-direction:column;gap:10px}
+.cb{display:flex;flex-direction:column;gap:5px}
+.cb-h{display:flex;justify-content:space-between;gap:10px;font-size:.86rem}
+details.rel-todos>summary{cursor:pointer}
+@media (max-width:900px){.tabs button{font-size:.6rem}}
+@media print{
+  :root{--bg:#fff!important;--surface:#fff!important;--surface-2:#f1f5f9!important;--surface-3:#e2e8f0!important;--line:#e2e8f0!important;--fg:#0f172a!important;--muted:#475569!important;--subtle:#64748b!important;
+    --pos:#065F46!important;--neg:#991B1B!important;--pos-soft:#ECFDF5!important;--neg-soft:#FEF2F2!important;--accent:#4338CA!important;color-scheme:light}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+  body{background:#fff!important;color:#0f172a!important}
+  .side,.tabs,.fab,.filters,.rel-ctrl,.demo-bar,.tb-r,.toast,.nota button{display:none!important}
+  .shell{display:block!important}.main{padding:0!important}.wrap{max-width:none!important;gap:12px!important}
+  .panel{box-shadow:none!important;break-inside:avoid;border-color:#e2e8f0!important}
+  .cols{grid-template-columns:1fr 1fr!important}
+  .tb th,.tb td{white-space:normal}
+}
 </style>
 </head>
 <body>
@@ -799,9 +825,9 @@ function render(){
   const limDisp = cartoes.reduce((s,c)=>s+Number(c.disponivel),0);
   const oT=Math.max(0,S.mes), agT=agenda(oT+1).filter(e=>e.m===oT&&e.tipo==="despesa"&&!e.pago&&!e.fixo), faltaPagar=agT.reduce((s,e)=>s+e.valor,0);
 
-  const NAV=[["geral","Início","layout-dashboard"],["cartoes","Cartões","credit-card"],["contas","Contas","landmark"],["lanc","Extrato","receipt-text"],["proj","Projetos","target"],["cad","Cadastros","settings"]];
+  const NAV=[["geral","Início","layout-dashboard"],["cartoes","Cartões","credit-card"],["contas","Contas","landmark"],["lanc","Extrato","receipt-text"],["proj","Projetos","target"],["rel","Relatório","file-text"],["cad","Cadastros","settings"]];
   const me=meuMembro();
-  const TIT={geral:`Olá, ${esc(me.nome||"")}`,cartoes:"Cartões",contas:"Contas e carteiras",lanc:"Extrato",proj:"Projetos",cad:"Cadastros"};
+  const TIT={geral:`Olá, ${esc(me.nome||"")}`,cartoes:"Cartões",contas:"Contas e carteiras",lanc:"Extrato",proj:"Projetos",rel:"Relatório",cad:"Cadastros"};
   const resumo = ["geral","cartoes","contas","lanc"].includes(S.tab);
   $("#app").innerHTML = `
   <div class="shell">
@@ -837,6 +863,7 @@ function render(){
       ${S.tab==="geral" ? `${secLanc(8)}${secContas(contas)}` : ""}
       ${S.tab==="contas" ? secContas(contas) : ""}
       ${S.tab==="lanc" ? secLanc(300) : ""}
+      ${S.tab==="rel" ? secRelatorio() : ""}
       ${S.tab==="cad" ? secCadastros() : ""}
       ${S.tab==="proj" ? secProjetos()+`<details class="panel pj-prem"><summary><h2 style="display:inline">Premissas da projeção</h2> <span class="muted" style="font-size:.82rem">reajuste, gasto do dia a dia, simulações</span></summary>${secProj()}</details>` : ""}
     </div></main>
@@ -857,6 +884,7 @@ function render(){
   document.querySelectorAll("[data-edit-conta]").forEach(b=>b.onclick=()=>modalConta(S.contas.find(c=>c.id===b.dataset.editConta)));
   ligarTilt();
   if(S.tab==="proj"){ ligarProj(); ligarProjetos(); }
+  if(S.tab==="rel") ligarRelatorio();
   if(S.tab==="contas"||S.tab==="geral") ligarContas();
   if(S.tab==="geral"){ desenharFech(); ligarInicio(); }
   document.querySelectorAll("[data-ir-lista]").forEach(b=>b.onclick=()=>{ S.lista="pagar"; if(S.tab!=="geral"){ S.tab="geral"; render(); } else render(); setTimeout(()=>{const l=$("#lista"); if(l) l.scrollIntoView({behavior:"smooth",block:"start"});},60); });
@@ -2060,6 +2088,133 @@ function ligarProjetos(){
   document.querySelectorAll("[data-pj-edit]").forEach(b=>b.onclick=()=>modalProjeto(projetosTodos().find(x=>x.id===b.dataset.pjEdit)));
   document.querySelectorAll("[data-pj-del]").forEach(b=>b.onclick=()=>{ if(b.dataset.c!=="1"){ b.dataset.c="1"; b.classList.add("confirm"); b.textContent="Excluir?"; return; } excluirProjeto(b.dataset.pjDel); render(); toast("Projeto excluído"); });
   document.querySelectorAll("[data-pj-aplicar]").forEach(b=>b.onclick=()=>aplicarProjeto(projetosTodos().find(x=>x.id===b.dataset.pjAplicar),Number(b.dataset.k)));
+}
+
+/* =====================================================================
+   RELATÓRIO de um período: entrou, saiu, sobra, mês a mês, categorias, perfis, pessoas, maiores gastos
+   ===================================================================== */
+S.rel={preset:"mes"};
+function periodoRel(){
+  const h=new Date(), y=h.getFullYear(), m=h.getMonth(), d=(yy,mm,dd)=>iso(new Date(yy,mm,dd,12));
+  const P={ mes:[d(y,m,1),iso(h)], ant:[d(y,m-1,1),d(y,m,0)], tri:[d(y,m-2,1),iso(h)], sem:[d(y,m-5,1),iso(h)], ano:[d(y,0,1),iso(h)], anoant:[d(y-1,0,1),d(y-1,11,31)] };
+  if(S.rel.preset==="custom") return [S.rel.de||P.mes[0], S.rel.ate||P.mes[1]];
+  return P[S.rel.preset]||P.mes;
+}
+async function lancPeriodo(de,ate){
+  const loc=S.lanc.filter(l=>l.data>=de&&l.data<=ate);
+  const maisAntigo=S.lanc.reduce((m,l)=>l.data<m?l.data:m,"9999");
+  if(DEMO || S.lanc.length<1000 || de>=maisAntigo) return loc;
+  const r=await sb.from("lancamentos").select("*").eq("familia_id",S.fam.id).gte("data",de).lte("data",ate).order("data",{ascending:false}).limit(10000);
+  return r.error?loc:(r.data||[]);
+}
+function analisarPeriodo(ls){
+  const soma=a=>a.reduce((s,l)=>s+Number(l.valor),0);
+  const ent=ls.filter(l=>l.tipo==="receita"&&!l.cartao_id&&!ehInterno(l));
+  const sai=ls.filter(l=>l.tipo==="despesa"&&!l.cartao_id&&(!ehInterno(l)||ehPagFaturaConta(l)));
+  // gastos de verdade (para "para onde foi"): débito/Pix/boletos + compras no cartão, sem pagamento de fatura nem movimentação interna
+  const gastos=[...ls.filter(l=>l.tipo==="despesa"&&!l.cartao_id&&!ehInterno(l)), ...ls.filter(l=>l.tipo==="despesa"&&l.cartao_id&&!ehPagCartao(l))];
+  const estornos=ls.filter(l=>l.tipo==="receita"&&l.cartao_id&&!ehPagCartao(l));
+  return {ent,sai,gastos,estornos,E:soma(ent),S:soma(sai),G:Math.max(0,soma(gastos)-soma(estornos)),cartao:Math.max(0,soma(gastos.filter(l=>l.cartao_id))-soma(estornos))};
+}
+function secRelatorio(){
+  const [de,ate]=periodoRel(), PR=[["mes","Este mês"],["ant","Mês passado"],["tri","3 meses"],["sem","6 meses"],["ano","Este ano"],["anoant","Ano passado"],["custom","Escolher datas"]];
+  return `<section class="panel rel-ctrl">
+    <div class="sec-h"><div><h2>Relatório</h2><span class="meta">Escolha o período. O filtro de pessoa/perfil lá em cima também vale aqui.</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" id="rel-csv">${ic("sheet","ico",14)} Baixar planilha</button><button class="btn sm" id="rel-pdf">${ic("printer","ico",14)} Imprimir / PDF</button></div></div>
+    <div class="who" role="group" aria-label="Período">${PR.map(([k,t])=>`<button class="chip" data-rel-p="${k}" aria-pressed="${S.rel.preset===k}">${t}</button>`).join("")}</div>
+    <div class="grid2" id="rel-datas" ${S.rel.preset==="custom"?"":"hidden"} style="max-width:420px">
+      <label class="field"><span>De</span><input type="date" id="rel-de" value="${de}"></label>
+      <label class="field"><span>Até</span><input type="date" id="rel-ate" value="${ate}"></label></div>
+  </section>
+  <div id="rel-out" class="rel-out"><section class="panel"><div class="empty">${ic("loader")} Montando o relatório…</div></section></div>`;
+}
+async function gerarRelatorio(){
+  const out=$("#rel-out"); if(!out) return;
+  const [de,ate]=periodoRel(), todos=await lancPeriodo(de,ate), ls=filtro(todos,"user_id");
+  const a=analisarPeriodo(ls), sobra=a.E-a.S, soma=x=>x.reduce((s,l)=>s+Number(l.valor),0);
+  const filtroNome = S.pessoa==="todos"?"Todos": S.pessoa.startsWith("p:")?nomeMembro(S.pessoa.slice(2)):(S.grupos.find(g=>"g:"+g.id===S.pessoa)||{}).nome||"";
+  // mês a mês
+  const meses={}; const mk=l=>l.data.slice(0,7);
+  for(let d=new Date(de+"T12:00:00"); iso(d).slice(0,7)<=ate.slice(0,7); d=new Date(d.getFullYear(),d.getMonth()+1,1,12)) meses[iso(d).slice(0,7)]={E:0,S:0,G:0};
+  a.ent.forEach(l=>{ if(meses[mk(l)]) meses[mk(l)].E+=Number(l.valor); });
+  a.sai.forEach(l=>{ if(meses[mk(l)]) meses[mk(l)].S+=Number(l.valor); });
+  a.gastos.forEach(l=>{ if(meses[mk(l)]) meses[mk(l)].G+=Number(l.valor); });
+  a.estornos.forEach(l=>{ if(meses[mk(l)]) meses[mk(l)].G-=Number(l.valor); });
+  const lm=Object.entries(meses), rotMes=k=>MESES[Number(k.slice(5,7))-1]+"/"+k.slice(2,4);
+  // categorias, perfis, pessoas
+  const agrupa=(arr,fk)=>{ const o={}; arr.forEach(l=>{ const k=fk(l); o[k]=(o[k]||0)+Number(l.valor); }); return Object.entries(o).sort((x,y)=>y[1]-x[1]); };
+  const nomeCat=id=>(S.cats.find(c=>c.id===id)||{}).nome||"Sem categoria", nomeGrp=id=>(S.grupos.find(g=>g.id===id)||{}).nome||"Sem perfil";
+  const cats=agrupa(a.gastos,l=>nomeCat(l.categoria_id)), totG=a.gastos.reduce((s,l)=>s+Number(l.valor),0)||1;
+  const perfis={}; a.ent.forEach(l=>{ const k=nomeGrp(l.grupo_id); (perfis[k]=perfis[k]||{E:0,G:0}).E+=Number(l.valor); }); a.gastos.forEach(l=>{ const k=nomeGrp(l.grupo_id); (perfis[k]=perfis[k]||{E:0,G:0}).G+=Number(l.valor); });
+  const pessoas={}; a.ent.forEach(l=>{ const k=nomeMembro(l.user_id); (pessoas[k]=pessoas[k]||{E:0,G:0}).E+=Number(l.valor); }); a.gastos.forEach(l=>{ const k=nomeMembro(l.user_id); (pessoas[k]=pessoas[k]||{E:0,G:0}).G+=Number(l.valor); });
+  const limpa=d=>String(d||"").split("|").map(t=>t.trim()).filter(Boolean).pop()||d;
+  const maiores=[...a.gastos].sort((x,y)=>y.valor-x.valor).slice(0,10);
+  const entradas=agrupa(a.ent,l=>limpa(l.descricao).replace(/\s*\(\d+\/\d+\)$/,"")).slice(0,10);
+  const orig=l=>l.conta_id?(S.contas.find(c=>c.id===l.conta_id)||{}).nome:(S.cartoes.find(c=>c.id===l.cartao_id)||{}).nome;
+  // gráfico mês a mês (barras entrou x saiu)
+  let graf="";
+  if(lm.length>1){ const W=Math.max(320,lm.length*64), H=170, T=12, B=24, mx=Math.max(1,...lm.map(([,v])=>Math.max(v.E,v.S))), bw=18;
+    const y=v=>T+(1-v/mx)*(H-T-B);
+    graf=`<svg class="chart rel-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Entrou e saiu por mês">${lm.map(([k,v],i)=>{ const cx=32+i*((W-48)/Math.max(1,lm.length-1||1));
+      return `<rect class="b-e" x="${cx-bw-1}" y="${y(v.E)}" width="${bw}" height="${H-B-y(v.E)}" rx="3"/><rect class="b-s" x="${cx+1}" y="${y(v.S)}" width="${bw}" height="${H-B-y(v.S)}" rx="3"/><text x="${cx}" y="${H-7}" text-anchor="middle">${rotMes(k)}</text>`; }).join("")}</svg>
+      <div class="leg"><span><i class="le"></i>entrou</span><span><i class="ls"></i>saiu da conta</span></div>`; }
+  const linhaVal=(rot,v,cls)=>`<div class="lrow"><span>${esc(rot)}</span><b class="num ${cls||""}">${brl(v)}</b></div>`;
+  out.innerHTML=`
+  <section class="panel rel-cab">
+    <div class="sec-h"><div><h2>Relatório de ${dt(de)} a ${dt(ate)}</h2><span class="meta">${esc(S.fam.nome)} · ${esc(filtroNome)} · ${ls.length} lançamentos</span></div></div>
+    <div class="real-g">
+      <div class="b"><span class="label">Entrou</span><span class="v pos">${brl(a.E)}</span><span class="s">${a.ent.length} entradas</span></div>
+      <div class="b"><span class="label">Saiu da conta</span><span class="v neg">${brl(a.S)}</span><span class="s">inclui faturas pagas</span></div>
+      <div class="b res ${sobra<0?"neg":"pos"}"><span class="label">Sobra</span><span class="v">${brl(sobra)}</span><span class="s">${a.E>0?(sobra<0?"gastou "+Math.round(a.S/a.E*100)+"% do que entrou":"guardou "+Math.round(sobra/a.E*100)+"% do que entrou"):"entrou − saiu"}</span></div>
+      <div class="b"><span class="label">Gastos do período</span><span class="v">${brl(a.G)}</span><span class="s">${brl(a.cartao)} no cartão</span></div>
+    </div>
+    <p class="muted nota">${ic("info","ico",13)} "Saiu da conta" é o dinheiro que saiu das contas (fatura conta no dia do pagamento). "Gastos" é o que vocês compraram: débito, Pix, boletos e compras no cartão no dia da compra. Pix entre suas contas e aplicações não contam.</p>
+  </section>
+  ${lm.length>1?`<section class="panel"><h2>Mês a mês</h2>${graf}
+    <div class="tbl-wrap"><table class="tb"><thead><tr><th>Mês</th><th>Entrou</th><th>Saiu da conta</th><th>Sobra</th><th>Gastos</th></tr></thead><tbody>
+    ${lm.map(([k,v])=>`<tr><td>${rotMes(k)}</td><td class="pos">${brl(v.E)}</td><td class="neg">${brl(v.S)}</td><td class="${v.E-v.S<0?"neg":"pos"}">${brl(v.E-v.S)}</td><td>${brl(Math.max(0,v.G))}</td></tr>`).join("")}
+    <tr class="tot"><td>Total</td><td class="pos">${brl(a.E)}</td><td class="neg">${brl(a.S)}</td><td class="${sobra<0?"neg":"pos"}">${brl(sobra)}</td><td>${brl(a.G)}</td></tr></tbody></table></div></section>`:""}
+  <div class="cols">
+    <section class="panel"><h2>Para onde foi (por categoria)</h2>
+      ${cats.length?`<div class="cat-bars">${cats.map(([n,v])=>`<div class="cb"><div class="cb-h"><span>${esc(n)}</span><b class="num">${brl(v)} <span class="muted">${Math.round(v/totG*100)}%</span></b></div><div class="bar"><i style="width:${(v/cats[0][1]*100).toFixed(1)}%"></i></div></div>`).join("")}</div>`:`<div class="empty">Sem gastos no período.</div>`}
+      ${cats.some(([n])=>n==="Sem categoria")?`<p class="muted" style="margin:0;font-size:.78rem">Dica: categorize os lançamentos no Extrato para este gráfico ficar mais útil.</p>`:""}
+    </section>
+    <section class="panel"><h2>Maiores gastos</h2><div class="list">${maiores.map(l=>`<div class="item"><div class="dot">${ic(l.cartao_id?"credit-card":"arrow-up-right")}</div>
+      <div><div class="t">${esc(limpa(l.descricao))}</div><div class="m">${dt(l.data)} · ${esc(orig(l)||"")} · ${esc(nomeMembro(l.user_id))}</div></div><div class="r"><b class="amt neg">− ${brl(l.valor)}</b></div></div>`).join("")||`<div class="empty">Nada no período.</div>`}</div></section>
+  </div>
+  <div class="cols">
+    <section class="panel"><h2>De onde veio (entradas)</h2>${entradas.map(([n,v])=>linhaVal(n,v,"pos")).join("")||`<div class="empty">Nenhuma entrada.</div>`}</section>
+    <section class="panel"><h2>Por perfil e por pessoa</h2>
+      <div class="tbl-wrap"><table class="tb"><thead><tr><th></th><th>Entrou</th><th>Gastos</th></tr></thead><tbody>
+      ${Object.entries(perfis).sort((x,y)=>y[1].G-x[1].G).map(([n,v])=>`<tr><td>${esc(n)}</td><td class="pos">${brl(v.E)}</td><td>${brl(v.G)}</td></tr>`).join("")}
+      <tr class="sep"><td colspan="3"></td></tr>
+      ${Object.entries(pessoas).map(([n,v])=>`<tr><td>${esc(n)}</td><td class="pos">${brl(v.E)}</td><td>${brl(v.G)}</td></tr>`).join("")}</tbody></table></div></section>
+  </div>
+  <section class="panel"><details class="rel-todos"><summary><h2 style="display:inline">Todos os lançamentos (${ls.length})</h2></summary>
+    <div class="tbl-wrap" style="margin-top:10px"><table class="tb"><thead><tr><th>Data</th><th>Descrição</th><th>Conta/cartão</th><th>Pessoa</th><th>Perfil</th><th>Categoria</th><th>Valor</th></tr></thead><tbody>
+    ${[...ls].sort((x,y)=>x.data.localeCompare(y.data)).map(l=>`<tr class="${ehInterno(l)?"int":""}"><td>${dt(l.data)}</td><td>${esc(limpa(l.descricao))}${ehInterno(l)?` <span class="pill">interno</span>`:""}</td><td>${esc(orig(l)||"")}</td><td>${esc(nomeMembro(l.user_id))}</td><td>${esc(nomeGrp(l.grupo_id))}</td><td>${esc(nomeCat(l.categoria_id))}</td><td class="${l.tipo==="receita"?"pos":"neg"}">${l.tipo==="receita"?"+":"−"} ${brl(l.valor)}</td></tr>`).join("")}
+    </tbody></table></div></details></section>`;
+  S._relDados={de,ate,ls,orig,nomeCat,nomeGrp,limpa};
+}
+function baixarCSV(){
+  const d=S._relDados; if(!d) return toast("Aguarde o relatório carregar");
+  const n=v=>Number(v).toFixed(2).replace(".",","), q=t=>`"${String(t??"").replace(/"/g,'""')}"`;
+  const linhas=[["Data","Descrição","Tipo","Valor","Conta/cartão","Pessoa","Perfil","Categoria","Movimentação interna"].join(";")]
+    .concat([...d.ls].sort((x,y)=>x.data.localeCompare(y.data)).map(l=>[l.data.split("-").reverse().join("/"),q(d.limpa(l.descricao)),l.tipo==="receita"?"Entrada":"Saída",
+      (l.tipo==="receita"?"":"-")+n(l.valor),q(d.orig(l)||""),q(nomeMembro(l.user_id)),q(d.nomeGrp(l.grupo_id)),q(d.nomeCat(l.categoria_id)),ehInterno(l)?"sim":"não"].join(";")));
+  const blob=new Blob(["﻿"+linhas.join("\r\n")],{type:"text/csv;charset=utf-8"}), a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=`relatorio_${d.de}_a_${d.ate}.csv`; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+  toast("Planilha baixada");
+}
+function ligarRelatorio(){
+  document.querySelectorAll("[data-rel-p]").forEach(b=>b.onclick=()=>{ S.rel.preset=b.dataset.relP;
+    if(S.rel.preset==="custom"&&!S.rel.de){ const [x,y]=periodoRel(); S.rel.de=x; S.rel.ate=y; } render(); });
+  const de=$("#rel-de"), ate=$("#rel-ate");
+  if(de) de.onchange=()=>{ S.rel.de=de.value; gerarRelatorio(); };
+  if(ate) ate.onchange=()=>{ S.rel.ate=ate.value; gerarRelatorio(); };
+  $("#rel-csv").onclick=baixarCSV;
+  $("#rel-pdf").onclick=()=>{ document.querySelectorAll("#rel-out details").forEach(x=>x.open=true); document.body.classList.add("imprimindo"); setTimeout(()=>{ window.print(); document.body.classList.remove("imprimindo"); },50); };
+  gerarRelatorio();
 }
 
 /* ---------- modais simples: conta a pagar e entrada ---------- */
