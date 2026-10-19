@@ -474,6 +474,15 @@ details.rel-todos>summary{cursor:pointer}
   .cols{grid-template-columns:1fr 1fr!important}
   .tb th,.tb td{white-space:normal}
 }
+
+.dot-btn{border:0;cursor:pointer;transition:transform .12s,box-shadow .15s}
+.dot-btn:hover{box-shadow:0 0 0 2px var(--accent)}
+.dot-btn.sem{background:var(--warn-soft);color:var(--warn)}
+.catn{font-weight:600;color:var(--fg)}
+.sc-r{flex-direction:row!important;align-items:center;gap:6px}
+.sc-r select{width:auto;min-width:150px;padding:7px 10px}
+.sc-row.sug .sc-r select{border-color:var(--accent)}
+@media (max-width:620px){.sc-row{grid-template-columns:40px minmax(0,1fr)}.sc-row .sc-r{grid-column:1/-1}.sc-r select{flex:1}}
 </style>
 </head>
 <body>
@@ -556,7 +565,7 @@ function demoClient(){
   let seq=100;
   const from=t=>{
     let op="select",payload=null,sel="";const f=[];
-    const match=r=>f.every(([k,v])=>r[k]===v);
+    const match=r=>f.every(([k,v,o])=> o==="in"?v.includes(r[k]) : o==="gte"?r[k]>=v : o==="lte"?r[k]<=v : r[k]===v);
     const run=()=>{
       if(op==="select"){
         if(t==="membros"&&sel.includes("familias")) return {data:[{familia_id:F,familias:db.familias[0]}],error:null};
@@ -569,7 +578,7 @@ function demoClient(){
       if(op==="delete"){db[t]=db[t].filter(r=>!match(r));return {data:null,error:null};}
       if(op==="upsert"){const i=db[t].findIndex(r=>r.user_id===payload.user_id);if(i<0)db[t].push(payload);else db[t][i]=payload;return {data:null,error:null};}
     };
-    const b={select:s=>{sel=s||"";return b},eq:(k,v)=>{f.push([k,v]);return b},order:()=>b,limit:()=>b,
+    const b={select:s=>{sel=s||"";return b},eq:(k,v)=>{f.push([k,v]);return b},in:(k,v)=>{f.push([k,v,"in"]);return b},gte:(k,v)=>{f.push([k,v,"gte"]);return b},lte:(k,v)=>{f.push([k,v,"lte"]);return b},order:()=>b,limit:()=>b,
       insert:r=>{op="insert";payload=r;return b},update:r=>{op="update";payload=r;return b},delete:()=>{op="delete";return b},
       upsert:r=>{op="upsert";payload=r;return b},then:(ok,ko)=>Promise.resolve(run()).then(ok,ko)};
     return b;
@@ -809,6 +818,7 @@ async function boot(){
   if(!mem || !mem.length) return renderOnboarding();
   S.fam = mem[0].familias;
   await carregar(); render();
+  aplicarRegrasCat().then(n=>{ if(n){ render(); } }).catch(()=>{});
   if(!DEMO && (S.conexoes||[]).length && !S.autoSync){ S.autoSync=true; let ult=0; try{ult=Number(localStorage.getItem("cf-sync-"+S.fam.id)||0);}catch(e){}
     const maisRecente=Math.max(ult,...S.conexoes.map(c=>c.ultima_sync?new Date(c.ultima_sync).getTime():0));
     if(Date.now()-maisRecente>12*36e5) sincronizarBancos(); }
@@ -862,7 +872,9 @@ function render(){
       ${S.tab==="cartoes" ? secFaturas() : ""}
       ${S.tab==="geral" ? `${secLanc(8)}${secContas(contas)}` : ""}
       ${S.tab==="contas" ? secContas(contas) : ""}
-      ${S.tab==="lanc" ? secLanc(300) : ""}
+      ${S.tab==="lanc" ? (()=>{ const n=filtro(S.lanc,"user_id").filter(ehSemCat).length;
+        return `<div class="seg" role="group" aria-label="Visão do extrato" style="max-width:460px"><button type="button" data-lv="mes" aria-pressed="${S.lancView!=="semcat"}">Lançamentos do mês</button><button type="button" data-lv="semcat" aria-pressed="${S.lancView==="semcat"}">Sem categoria <span class="cnt">${n}</span></button></div>`
+          + (S.lancView==="semcat"?secSemCat():secLanc(300)); })() : ""}
       ${S.tab==="rel" ? secRelatorio() : ""}
       ${S.tab==="cad" ? secCadastros() : ""}
       ${S.tab==="proj" ? secProjetos()+`<details class="panel pj-prem"><summary><h2 style="display:inline">Premissas da projeção</h2> <span class="muted" style="font-size:.82rem">reajuste, gasto do dia a dia, simulações</span></summary>${secProj()}</details>` : ""}
@@ -885,6 +897,9 @@ function render(){
   ligarTilt();
   if(S.tab==="proj"){ ligarProj(); ligarProjetos(); }
   if(S.tab==="rel") ligarRelatorio();
+  if(S.tab==="lanc"){ document.querySelectorAll("[data-lv]").forEach(b=>b.onclick=()=>{ S.lancView=b.dataset.lv; render(); }); if(S.lancView==="semcat") ligarSemCat(); }
+  document.querySelectorAll("[data-cat-l]").forEach(b=>b.onclick=()=>{ const l=S.lanc.find(x=>x.id===b.dataset.catL); if(l) modalCategoria(l); });
+  document.querySelectorAll("[data-ir-semcat]").forEach(b=>b.onclick=()=>{ S.tab="lanc"; S.lancView="semcat"; render(); window.scrollTo(0,0); });
   if(S.tab==="contas"||S.tab==="geral") ligarContas();
   if(S.tab==="geral"){ desenharFech(); ligarInicio(); }
   document.querySelectorAll("[data-ir-lista]").forEach(b=>b.onclick=()=>{ S.lista="pagar"; if(S.tab!=="geral"){ S.tab="geral"; render(); } else render(); setTimeout(()=>{const l=$("#lista"); if(l) l.scrollIntoView({behavior:"smooth",block:"start"});},60); });
@@ -956,8 +971,8 @@ function secLanc(n){
     <div class="list">${l.length? l.map(x=>{
       const cat=S.cats.find(c=>c.id===x.categoria_id), g=S.grupos.find(c=>c.id===x.grupo_id);
       return `<div class="item">
-        <div class="dot" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</div>
-        <div><div class="t">${esc(x.descricao)}</div><div class="m">${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
+        <button class="dot dot-btn${!cat&&!ehInterno(x)?" sem":""}" data-cat-l="${x.id}" title="${cat?"Categoria: "+esc(cat.nome)+" (trocar)":"Sem categoria: toque para escolher"}" aria-label="Categoria" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</button>
+        <div><div class="t">${esc(x.descricao)}</div><div class="m">${cat?`<b class="catn">${esc(cat.nome)}</b> · `:(!ehInterno(x)&&x.tipo==="despesa"?`<button class="link" style="font-size:.76rem" data-cat-l="${x.id}">+ categoria</button> · `:"")}${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
         <div class="r"><div class="amt ${x.tipo==="receita"?"pos":"neg"}">${x.tipo==="receita"?"+":"−"} ${brl(x.valor)}</div>
           <div class="acts">${ehInterno(x)?`<span class="pill" title="Movimentação entre suas contas: não conta como gasto nem renda">interno</span>`:""}${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
       </div>`}).join("") : `<div class="empty">${ic("receipt-text")} Sem lançamentos em ${r.nome}. Use “Novo lançamento” para registrar uma entrada ou saída.</div>`}
@@ -1530,7 +1545,7 @@ async function conectarBanco(){
 }
 async function sincronizarBancos(btn){
   if(btn){ btn.disabled=true; btn.innerHTML=ic("refresh-cw","ico",14)+" Sincronizando…"; }
-  try{ const r=await chamarPluggy({acao:"sync"}); try{localStorage.setItem("cf-sync-"+S.fam.id,String(Date.now()));}catch(e){} await carregar(); render(); toast(resumoSync(r.resultados)||"Sincronizado"); }
+  try{ const r=await chamarPluggy({acao:"sync"}); try{localStorage.setItem("cf-sync-"+S.fam.id,String(Date.now()));}catch(e){} await carregar(); await aplicarRegrasCat().catch(()=>0); render(); toast(resumoSync(r.resultados)||"Sincronizado"); }
   catch(e){ const er=$("#pl-err"); if(er) er.textContent=e.message; else toast(e.message); if(btn){btn.disabled=false;btn.innerHTML=ic("refresh-cw","ico",14)+" Sincronizar";} }
 }
 
@@ -2178,7 +2193,7 @@ async function gerarRelatorio(){
   <div class="cols">
     <section class="panel"><h2>Para onde foi (por categoria)</h2>
       ${cats.length?`<div class="cat-bars">${cats.map(([n,v])=>`<div class="cb"><div class="cb-h"><span>${esc(n)}</span><b class="num">${brl(v)} <span class="muted">${Math.round(v/totG*100)}%</span></b></div><div class="bar"><i style="width:${(v/cats[0][1]*100).toFixed(1)}%"></i></div></div>`).join("")}</div>`:`<div class="empty">Sem gastos no período.</div>`}
-      ${cats.some(([n])=>n==="Sem categoria")?`<p class="muted" style="margin:0;font-size:.78rem">Dica: categorize os lançamentos no Extrato para este gráfico ficar mais útil.</p>`:""}
+      ${cats.some(([n])=>n==="Sem categoria")?`<p class="muted" style="margin:0;font-size:.78rem">Tem gasto sem categoria. <button class="link" data-ir-semcat>Categorizar agora</button> (leva 1 minuto e o app aprende).</p>`:""}
     </section>
     <section class="panel"><h2>Maiores gastos</h2><div class="list">${maiores.map(l=>`<div class="item"><div class="dot">${ic(l.cartao_id?"credit-card":"arrow-up-right")}</div>
       <div><div class="t">${esc(limpa(l.descricao))}</div><div class="m">${dt(l.data)} · ${esc(orig(l)||"")} · ${esc(nomeMembro(l.user_id))}</div></div><div class="r"><b class="amt neg">− ${brl(l.valor)}</b></div></div>`).join("")||`<div class="empty">Nada no período.</div>`}</div></section>
@@ -2216,6 +2231,81 @@ function ligarRelatorio(){
   $("#rel-csv").onclick=baixarCSV;
   $("#rel-pdf").onclick=()=>{ document.querySelectorAll("#rel-out details").forEach(x=>x.open=true); document.body.classList.add("imprimindo"); setTimeout(()=>{ window.print(); document.body.classList.remove("imprimindo"); },50); };
   gerarRelatorio();
+}
+
+/* =====================================================================
+   CATEGORIZAR: ver o que está sem categoria, sugerir pelo nome e aprender regras
+   ===================================================================== */
+const DIC_CAT=[
+  ["Compras",/mercado ?liv|mercadolivre|mercadopago\*?ml|shopee|amazon|magalu|magazine|havan|riachuelo|renner|\bc&a\b|shein|aliexpress|kabum|casas bahia|calcad|modas|jeans|lojao|perola|home center|floricult|quadros|casescell|\bcell\b|presente|keima|pe de anjo|force group|lee bella|paris atacado/],
+  ["Mercado",/atacad|supermerc|super merc|hiper|assai|condor|muffato|carrefour|angeloni|dal pozzo|parteka|mafamarket|quitanda|acougue|hortifruti|mercearia|cruz e cruz|\bmercado\b/],
+  ["Transporte",/posto|combust|shell|ipiranga|petrobras|br mania|\buber\b|\b99\b|nutag|viaaraucaria|via araucaria|\bepr\b|pedagio|estaciona|\bpark\b|\bpista\b|lavacar|lava car|pneu|autopec|oficina|detran|ipva|zanforlin|aeroposto|auto p/],
+  ["Alimentação",/restaur|pizz|lanch|burg|\bifd\b|ifood|padaria|sorvet|grill|churrasc|\bbar\b|cafe|doce|food|delivery|chopp|massa|paladar|hamburg|xuehongli|chongjiecai|consagrada/],
+  ["Saúde",/farmac|drogar|raia|panvel|hospital|clinic|laborat|odonto|medic|pharma/],
+  ["Lazer",/cinema|cinequinze|netflix|spotify|ticket|bilheter|steam|playstation|xbox|\bshow\b|hotel|airbnb|ingresso|disney|prime video|hbo|globoplay/],
+  ["Educação",/escola|faculdade|curso|udemy|univc|xperiun|livraria/],
+  ["Moradia",/condomin|iptu|aluguel/],
+  ["Contas fixas",/nucel|plano nu|\btim\b|vivo|claro|copel|sanepar|energia|\bagua\b|internet|telefon|apple\.com|anthropic|claude|google|microsoft|nubank\+|nubank croma|seguro|consorcio|ademicon|emprest|financiamento|parcela paga|votorantim/],
+  ["Outros",/\biof\b|tarifa|anuidade|taxa de/],
+];
+const catPorNome=n=>S.cats.find(c=>normTxt(c.nome)===normTxt(n));
+function regraCat(desc){ const v=marca("cat:"+chaveDesc(desc),"rule"); return v&&S.cats.some(c=>c.id===v)?v:null; }
+function sugerirCat(desc){
+  const r=regraCat(desc); if(r) return {id:r,regra:true};
+  const d=normTxt(desc); for(const [nome,re] of DIC_CAT){ if(re.test(d)){ const c=catPorNome(nome); if(c) return {id:c.id,regra:false}; } }
+  return null;
+}
+const ehSemCat=l=>l.tipo==="despesa"&&!l.categoria_id&&!ehInterno(l)&&!(l.cartao_id&&ehPagCartao(l))&&!ehPagFaturaConta(l);
+async function aplicarCategoria(ids, catId, chave){
+  for(let i=0;i<ids.length;i+=200){ const r=await sb.from("lancamentos").update({categoria_id:catId}).in("id",ids.slice(i,i+200)); if(r.error){ toast("Não salvou: "+r.error.message); return false; } }
+  const set=new Set(ids); S.lanc.forEach(l=>{ if(set.has(l.id)) l.categoria_id=catId; });
+  if(chave) marcar("cat:"+chave,"rule",catId);
+  return true;
+}
+/* regras aprendidas: aplica sozinho nas compras novas sem categoria (roda ao abrir o app) */
+async function aplicarRegrasCat(){
+  const por={}; S.lanc.filter(ehSemCat).forEach(l=>{ const r=regraCat(l.descricao); if(r) (por[r]=por[r]||[]).push(l.id); });
+  for(const [cat,ids] of Object.entries(por)) await aplicarCategoria(ids,cat,null);
+  return Object.values(por).reduce((s,a)=>s+a.length,0);
+}
+S.lancView="mes";
+function gruposSemCat(){
+  const g={}; filtro(S.lanc,"user_id").filter(ehSemCat).forEach(l=>{ const k=chaveDesc(l.descricao);
+    (g[k]=g[k]||{k,desc:String(l.descricao||"").split("|").map(t=>t.trim()).filter(Boolean).pop()||l.descricao,itens:[],total:0}); g[k].itens.push(l); g[k].total+=Number(l.valor); });
+  return Object.values(g).map(x=>({...x,sug:sugerirCat(x.desc)})).sort((a,b)=>b.total-a.total);
+}
+function secSemCat(){
+  const gs=gruposSemCat(), n=gs.reduce((s,x)=>s+x.itens.length,0), comSug=gs.filter(x=>x.sug);
+  const opts=sel=>`<option value="">Escolher…</option>`+S.cats.map(c=>`<option value="${c.id}" ${c.id===sel?"selected":""}>${esc(c.nome)}</option>`).join("");
+  return `<section class="panel" id="semcat">
+    <div class="sec-h"><div><h2>Sem categoria</h2><span class="meta">${n} ${n===1?"compra":"compras"} em ${gs.length} ${gs.length===1?"grupo":"grupos"}. Escolha uma vez e vale para todas as iguais, inclusive as próximas.</span></div>
+      ${comSug.length?`<button class="btn sm" id="sc-todas">${ic("sparkles","ico",14)} Aceitar ${comSug.length} ${comSug.length===1?"sugestão":"sugestões"}</button>`:""}</div>
+    ${gs.length?`<div class="list">${gs.map(x=>`<div class="item sc-row${x.sug?" sug":""}" data-k="${esc(x.k)}">
+      <div class="dot">${ic("tag")}</div>
+      <div><div class="t">${esc(x.desc)}</div><div class="m">${x.itens.length}× · ${brl(x.total)} · último em ${dt(x.itens.map(l=>l.data).sort().pop())}${x.sug?` · <span class="pill auto">${x.sug.regra?"regra":"sugestão"}</span>`:""}</div></div>
+      <div class="r sc-r"><select data-sc="${esc(x.k)}" aria-label="Categoria de ${esc(x.desc)}">${opts(x.sug&&x.sug.id)}</select>${x.sug?`<button class="btn ghost sm" data-sc-ok="${esc(x.k)}" title="Aceitar sugestão">${ic("check","ico",14)} OK</button>`:""}</div></div>`).join("")}</div>`
+      :`<div class="vazio">${ic("circle-check","ico",28)}<b>Tudo categorizado</b><span class="muted">Quando chegar compra nova sem categoria, ela aparece aqui.</span></div>`}
+    <p class="muted nota">${ic("info","ico",13)} Não aparecem aqui: Pix entre suas contas, aplicações e pagamento de fatura. Faltou uma categoria? Crie em <button class="link" data-tab="cad">Cadastros</button>.</p>
+  </section>`;
+}
+function ligarSemCat(){
+  const el=$("#semcat"); if(!el) return; const gs=gruposSemCat(), porK=Object.fromEntries(gs.map(x=>[x.k,x]));
+  const salvar=async(k,cat,silencioso)=>{ const x=porK[k]; if(!x||!cat) return 0; const ok=await aplicarCategoria(x.itens.map(l=>l.id),cat,k); return ok?x.itens.length:0; };
+  el.querySelectorAll("[data-sc]").forEach(s=>s.onchange=async()=>{ const k=s.dataset.sc, n=await salvar(k,s.value); if(n){ toast(`${(S.cats.find(c=>c.id===s.value)||{}).nome}: ${n} ${n===1?"compra":"compras"} · regra salva`); render(); } });
+  el.querySelectorAll("[data-sc-ok]").forEach(b=>b.onclick=async()=>{ const k=b.dataset.scOk, x=porK[k]; const n=await salvar(k,x.sug.id); if(n){ toast(`${(S.cats.find(c=>c.id===x.sug.id)||{}).nome}: ${n} ${n===1?"compra":"compras"}`); render(); } });
+  const t=$("#sc-todas"); if(t) t.onclick=async()=>{ t.disabled=true; t.textContent="Salvando…"; let tot=0; for(const x of gs.filter(x=>x.sug)) tot+=await salvar(x.k,x.sug.id); toast(`${tot} compras categorizadas`); render(); };
+}
+/* categoria de um lançamento (tocar no ícone do extrato) */
+function modalCategoria(l){
+  const k=chaveDesc(l.descricao), parecidas=S.lanc.filter(x=>x.id!==l.id&&x.tipo===l.tipo&&chaveDesc(x.descricao)===k);
+  abrir(`<h2>Categoria</h2>
+    <p class="muted" style="margin:0">${esc(l.descricao)} · ${dt(l.data)} · ${brl(l.valor)}</p>
+    <label class="field"><span>Categoria</span><select id="mc-cat">${S.cats.map(c=>`<option value="${c.id}" ${c.id===(l.categoria_id||(sugerirCat(l.descricao)||{}).id)?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></label>
+    ${parecidas.length?`<label class="check"><input type="checkbox" id="mc-todas" checked> Aplicar também às outras ${parecidas.length} iguais e às próximas</label>`:`<label class="check"><input type="checkbox" id="mc-todas" checked> Usar sempre para "${esc(String(l.descricao).split("|").pop().trim().slice(0,40))}"</label>`}
+    <div class="row-end"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="mc-ok">Salvar</button></div>`, ()=>{
+    $("#mc-ok").onclick=async()=>{ const cat=$("#mc-cat").value, todas=$("#mc-todas").checked;
+      const ids=[l.id,...(todas?parecidas.map(x=>x.id):[])]; if(await aplicarCategoria(ids,cat,todas?k:null)){ fechar(); render(); toast(`Categoria salva${ids.length>1?` em ${ids.length} lançamentos`:""}`); } };
+  });
 }
 
 /* ---------- modais simples: conta a pagar e entrada ---------- */
