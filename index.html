@@ -1040,6 +1040,11 @@ function nomesProprios(){
   return S._nomes=n.map(s=>normTxt(s).split(/\s+/).filter(t=>t.length>2)).filter(a=>a.length>=2);
 }
 const chaveDesc=s=>normTxt(s).replace(/\s*\(\d+\/\d+\)\s*$/,"").replace(/\s+/g," ").trim();
+/* chave para juntar compras iguais: tira parcelas ("PARC 05/06", "(5/6)", "3 de 10"), números e sufixos de país */
+const chaveGrupo=s=>{ const k=normTxt(String(s||"").split("|").pop()).replace(/\(\d+\/\d+\)/g," ").replace(/\bparc(ela)?\.?\s*\d+\s*(\/|de)\s*\d+/g," ")
+  .replace(/\b\d+\s*(\/|de)\s*\d+\b/g," ").replace(/\d+/g," ").replace(/[^a-z ]/g," ").replace(/\b(br|bra|parc|parcela)\b/g," ").replace(/\s+/g," ").trim(); return k||chaveDesc(s); };
+/* nome para mostrar, sem a marca da parcela */
+const nomeLimpo=s=>String(s||"").split("|").map(t=>t.trim()).filter(Boolean).pop().replace(/\s*\(\d+\/\d+\)\s*$/,"").replace(/\s*PARC(ELA)?\.?\s*\d+\s*\/\s*\d+/i,"").replace(/\s+\d+\s*\/\s*\d+\s*$/,"").replace(/\s+/g," ").trim();
 function ehInterno(l){
   const d=normTxt(l.descricao);
   if(((S.proj&&S.proj.ignorar)||[]).includes(chaveDesc(l.descricao))) return true;   // marcado por você como "não é gasto"
@@ -2270,7 +2275,7 @@ const DIC_CAT=[
   ["Outros",/\biof\b|tarifa|anuidade|taxa de/],
 ];
 const catPorNome=n=>S.cats.find(c=>normTxt(c.nome)===normTxt(n));
-function regraCat(desc){ const v=marca("cat:"+chaveDesc(desc),"rule"); return v&&S.cats.some(c=>c.id===v)?v:null; }
+function regraCat(desc){ const v=marca("cat:"+chaveGrupo(desc),"rule")||marca("cat:"+chaveDesc(desc),"rule"); return v&&S.cats.some(c=>c.id===v)?v:null; }
 function sugerirCat(desc){
   const r=regraCat(desc); if(r) return {id:r,regra:true};
   const d=normTxt(desc); for(const [nome,re] of DIC_CAT){ if(re.test(d)){ const c=catPorNome(nome); if(c) return {id:c.id,regra:false}; } }
@@ -2291,8 +2296,8 @@ async function aplicarRegrasCat(){
 }
 S.lancView="mes";
 function gruposSemCat(){
-  const g={}; filtro(S.lanc,"user_id").filter(ehSemCat).forEach(l=>{ const k=chaveDesc(l.descricao);
-    (g[k]=g[k]||{k,desc:String(l.descricao||"").split("|").map(t=>t.trim()).filter(Boolean).pop()||l.descricao,itens:[],total:0}); g[k].itens.push(l); g[k].total+=Number(l.valor); });
+  const g={}; filtro(S.lanc,"user_id").filter(ehSemCat).forEach(l=>{ const k=chaveGrupo(l.descricao);
+    (g[k]=g[k]||{k,desc:nomeLimpo(l.descricao)||l.descricao,itens:[],total:0}); g[k].itens.push(l); g[k].total+=Number(l.valor); });
   return Object.values(g).map(x=>({...x,sug:sugerirCat(x.desc)})).sort((a,b)=>b.total-a.total);
 }
 function secSemCat(){
@@ -2318,7 +2323,7 @@ function ligarSemCat(){
 }
 /* categoria de um lançamento (tocar no ícone do extrato) */
 function modalCategoria(l){
-  const k=chaveDesc(l.descricao), parecidas=S.lanc.filter(x=>x.id!==l.id&&x.tipo===l.tipo&&chaveDesc(x.descricao)===k);
+  const k=chaveGrupo(l.descricao), parecidas=S.lanc.filter(x=>x.id!==l.id&&x.tipo===l.tipo&&chaveGrupo(x.descricao)===k);
   abrir(`<h2>Categoria</h2>
     <p class="muted" style="margin:0">${esc(l.descricao)} · ${dt(l.data)} · ${brl(l.valor)}</p>
     <label class="field"><span>Categoria</span><select id="mc-cat">${S.cats.map(c=>`<option value="${c.id}" ${c.id===(l.categoria_id||(sugerirCat(l.descricao)||{}).id)?"selected":""}>${esc(c.nome)}</option>`).join("")}</select></label>
@@ -2403,7 +2408,7 @@ const SUB_KW=/netflix|spotify|anthropic|claude|openai|chatgpt|apple\.com|icloud|
 function assinaturas(){
   const hj=new Date(), mesAt=iso(hj).slice(0,7), lim45=iso(new Date(hj.getTime()-45*864e5));
   const base=filtro(S.lanc,"user_id").filter(l=>l.tipo==="despesa"&&l.data<=iso(hj)&&!ehInterno(l)&&!ehParcela(l)&&!ehPagCartao(l)&&!ehPagFaturaConta(l)&&!/^iof/.test(normTxt(l.descricao)));
-  const g={}; base.forEach(l=>{ const k=chaveDesc(l.descricao).replace(/\b\d{3,}\b/g,"").replace(/\s+/g," ").trim(); (g[k]=g[k]||[]).push(l); });
+  const g={}; base.forEach(l=>{ const k=chaveGrupo(l.descricao); (g[k]=g[k]||[]).push(l); });
   const out=[];
   Object.entries(g).forEach(([k,ls])=>{
     if(marca("sub:"+k,"ign")===true) return;
