@@ -1492,9 +1492,10 @@ function secConexoes(){
     <div class="sec-h"><h2>Bancos conectados</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${cx.length?`<button class="btn ghost sm" id="pl-sync">${ic("refresh-cw","ico",14)} Sincronizar</button>`:""}<button class="btn sm" id="pl-add">${ic("link-2","ico",14)} Conectar banco</button></div></div>
     <p class="muted" style="margin:0;font-size:.82rem">Via Open Finance (MeuPluggy). Saldos, limites, faturas e transações entram sozinhos. Conecte um banco por vez.</p>
+    <div class="callout pos" style="font-size:.82rem;padding:8px 12px">${ic("refresh-cw","ico",14)}<span><b>Atualização automática</b> todos os dias às 6h, 12h e 18h, para os bancos de todo mundo. "Sincronizar" atualiza na hora.</span></div>
     <div class="list">${cx.length?cx.map(c=>{ const exp=c.consentimento_expira_em, dias=exp?Math.round((new Date(exp)-new Date())/864e5):null;
       return `<div class="item"><div class="dot bank" style="background:linear-gradient(135deg,#4F46E5,#7C3AED)">${ini(c.banco)}</div>
-        <div><div class="t">${esc(c.banco)}</div><div class="m">${esc(nomeMembro(c.user_id))} · atualizado ${quando(c.ultima_sync)}${dias!==null?` · consentimento ${dias<=30?`<b style="color:var(--warn)">vence em ${dias} dias</b>`:"até "+dt(exp)}`:""}</div></div>
+        <div><div class="t">${esc(c.banco)}</div><div class="m">${esc(nomeMembro(c.user_id))} · atualizado ${quando(c.ultima_sync)}${dias!==null?` · autorização ${dias<0?`<b style="color:var(--neg)">venceu, reconecte</b>`:dias<=30?`<b style="color:var(--warn)">vence em ${dias} dias</b>`:"até "+new Date(exp+"T12:00:00").toLocaleDateString("pt-BR")}`:""}</div></div>
         <div class="r"><span class="pill ${/ERROR|LOGIN|OUTDATED/i.test(c.status)?"":"auto"}">${/ERROR|LOGIN|OUTDATED/i.test(c.status)?"reconectar":"ativo"}</span>
           <button class="iconbtn sm danger" data-pl-rm="${esc(c.pluggy_item_id)}" aria-label="Desconectar ${esc(c.banco)}" title="Desconectar">${ic("unlink","ico",14)}</button></div></div>`; }).join("")
       :`<div class="empty">${ic("landmark")} Nenhum banco conectado ainda.</div>`}</div>

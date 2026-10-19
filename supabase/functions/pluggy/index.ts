@@ -1,5 +1,6 @@
 // Edge Function "pluggy": ponte segura entre o app e a API da Pluggy (Open Finance / MeuPluggy).
-// Ações (POST JSON): {acao:"token"} | {acao:"salvar_item", itemId} | {acao:"sync"} | {acao:"remover", itemId}
+// Ações (POST JSON): {acao:"token"} | {acao:"salvar_item", itemId} | {acao:"sync"} | {acao:"remover", itemId} | {acao:"cron"} (agendado, header x-cron-token)
+// Autenticação: ações de usuário exigem login (auth.getUser); "cron" exige o token guardado em public.app_config
 // Segredos necessários: PLUGGY_CLIENT_ID, PLUGGY_CLIENT_SECRET
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -231,6 +232,23 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
+    const body = await req.json().catch(() => ({}));
+
+    // atualização automática (agendada no banco com pg_cron): sincroniza as conexões de todos, com a chave de serviço
+    if (body.acao === "cron") {
+      const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const tok = req.headers.get("x-cron-token") || "";
+      const { data: cfg } = await admin.from("app_config").select("v").eq("k", "cron_token").maybeSingle();
+      if (!cfg?.v || !tok || tok !== cfg.v) return json({ error: "não autorizado" }, 401);
+      const { data: cx } = await admin.from("conexoes_pluggy").select("*");
+      const resultados = [];
+      for (const c of cx || []) {
+        try { resultados.push(await syncItem(admin, c.familia_id, c.user_id, c.pluggy_item_id)); }
+        catch (e) { resultados.push({ banco: c.banco, erro: String((e as Error).message || e) }); }
+      }
+      return json({ ok: true, resultados });
+    }
+
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
       global: { headers: { Authorization: req.headers.get("Authorization") || "" } },
     });
@@ -239,7 +257,6 @@ Deno.serve(async (req) => {
     const { data: mem } = await sb.from("membros").select("familia_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (!mem) return json({ error: "Usuário sem família." }, 400);
     const fid = mem.familia_id;
-    const body = await req.json().catch(() => ({}));
 
     if (body.acao === "token") {
       const t = await pg("/connect_token", {
