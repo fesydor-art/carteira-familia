@@ -515,6 +515,8 @@ details.rel-todos>summary{cursor:pointer}
 .lcol-h b{font-size:1.02rem}.lcol-h b.pos{color:var(--pos)}.lcol-h b.neg{color:var(--neg)}
 .lcol-s{font-size:.74rem}
 .item.interno{opacity:.6}
+.dotw{position:relative;display:inline-grid;width:40px;height:40px}
+.dotw .quem{position:absolute;right:-6px;bottom:-6px;border-radius:999px;box-shadow:0 0 0 2px var(--surface);line-height:0;pointer-events:none}
 </style>
 </head>
 <body>
@@ -746,6 +748,9 @@ const parcTxt = x => x.parcela_total>1 ? `${x.parcela_num}/${x.parcela_total}` :
 function grupoPadrao(){ if(S.pessoa.startsWith("g:")) return S.pessoa.slice(2); return (S.grupos.find(g=>/casal/i.test(g.nome))||S.grupos[0]||{}).id||""; }
 const optsGrupos = sel => `<option value="">—</option>`+S.grupos.map(g=>`<option value="${g.id}" ${g.id===sel?"selected":""}>${esc(g.nome)}</option>`).join("");
 function nomeMembro(uid){ return (S.membros.find(m=>m.user_id===uid)||{}).nome || "—"; }
+/* ícone do lançamento com a foto de quem gastou/recebeu no canto */
+function comQuem(uid,dot){ const m=S.membros.find(x=>x.user_id===uid); if(!m||S.membros.length<2) return dot;
+  return `<span class="dotw">${dot}<span class="quem" title="${esc(m.nome)}">${avatarHTML(m,20)}</span></span>`; }
 
 /* ---------- AUTH ---------- */
 function renderAuth(modo="entrar"){
@@ -997,7 +1002,7 @@ function secLanc(n){
   const nomeOrig = x => x.conta_id ? (S.contas.find(c=>c.id===x.conta_id)||{}).nome : (S.cartoes.find(c=>c.id===x.cartao_id)||{}).nome;
   const item=x=>{ const cat=S.cats.find(c=>c.id===x.categoria_id), g=S.grupos.find(c=>c.id===x.grupo_id), int=ehInterno(x);
     return `<div class="item${int?" interno":""}">
-        <button class="dot dot-btn${!cat&&!int?" sem":""}" data-cat-l="${x.id}" title="${cat?"Categoria: "+esc(cat.nome)+" (trocar)":"Sem categoria: toque para escolher"}" aria-label="Categoria" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</button>
+        ${comQuem(x.user_id,`<button class="dot dot-btn${!cat&&!int?" sem":""}" data-cat-l="${x.id}" title="${cat?"Categoria: "+esc(cat.nome)+" (trocar)":"Sem categoria: toque para escolher"}" aria-label="Categoria" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</button>`)}
         <div><div class="t">${esc(x.descricao)}</div><div class="m">${cat?`<b class="catn">${esc(cat.nome)}</b> · `:(!int?`<button class="link" style="font-size:.76rem" data-cat-l="${x.id}">+ categoria</button> · `:"")}${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
         <div class="r"><div class="amt ${int?"":x.tipo==="receita"?"pos":"neg"}">${x.tipo==="receita"?"+":"−"} ${brl(x.valor)}</div>
           <div class="acts">${int?`<span class="pill" title="Movimentação entre suas contas: não conta como gasto nem renda">interno</span>`:""}${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
@@ -2238,7 +2243,7 @@ async function gerarRelatorio(){
       ${cats.length?`<div class="cat-bars">${cats.map(([n,v])=>`<div class="cb"><div class="cb-h"><span>${esc(n)}</span><b class="num">${brl(v)} <span class="muted">${Math.round(v/totG*100)}%</span></b></div><div class="bar"><i style="width:${(v/cats[0][1]*100).toFixed(1)}%"></i></div></div>`).join("")}</div>`:`<div class="empty">Sem gastos no período.</div>`}
       ${cats.some(([n])=>n==="Sem categoria")?`<p class="muted" style="margin:0;font-size:.78rem">Tem gasto sem categoria. <button class="link" data-ir-semcat>Categorizar agora</button> (leva 1 minuto e o app aprende).</p>`:""}
     </section>
-    <section class="panel"><h2>Maiores gastos</h2><div class="list">${maiores.map(l=>`<div class="item"><div class="dot">${ic(l.cartao_id?"credit-card":"arrow-up-right")}</div>
+    <section class="panel"><h2>Maiores gastos</h2><div class="list">${maiores.map(l=>`<div class="item">${comQuem(l.user_id,`<div class="dot">${ic(l.cartao_id?"credit-card":"arrow-up-right")}</div>`)}
       <div><div class="t">${esc(limpa(l.descricao))}</div><div class="m">${dt(l.data)} · ${esc(orig(l)||"")} · ${esc(nomeMembro(l.user_id))}</div></div><div class="r"><b class="amt neg">− ${brl(l.valor)}</b></div></div>`).join("")||`<div class="empty">Nada no período.</div>`}</div></section>
   </div>
   <div class="cols">
@@ -2559,7 +2564,7 @@ async function responder(q){
   let porCat=""; if(!p.cat&&p.tipo==="despesa"&&r.length){ const o={}; r.forEach(l=>{ const n=(S.cats.find(c=>c.id===l.categoria_id)||{}).nome||"Sem categoria"; o[n]=(o[n]||0)+Number(l.valor); });
     porCat=`<div class="as-cats">${Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,v])=>`<span class="pill">${esc(n)} ${brl(v)}</span>`).join("")}</div>`; }
   return `<div class="as-resp"><p class="as-frase">${frase}${comp?`<span class="muted">${comp}</span>`:""} <span class="muted">${r.length} ${r.length===1?"lançamento":"lançamentos"}.</span></p>${porCat}
-    ${lista.length?`<div class="list">${lista.map(l=>`<div class="item"><div class="dot">${ic(l.cartao_id?"credit-card":p.tipo==="receita"?"arrow-down-left":"arrow-up-right")}</div>
+    ${lista.length?`<div class="list">${lista.map(l=>`<div class="item">${comQuem(l.user_id,`<div class="dot">${ic(l.cartao_id?"credit-card":p.tipo==="receita"?"arrow-down-left":"arrow-up-right")}</div>`)}
       <div><div class="t">${esc(String(l.descricao).split("|").pop().trim())}</div><div class="m">${dt(l.data)} · ${esc(nomeMembro(l.user_id))}${(S.cats.find(c=>c.id===l.categoria_id)||{}).nome?` · ${esc(S.cats.find(c=>c.id===l.categoria_id).nome)}`:""}</div></div>
       <div class="r"><b class="amt ${p.tipo==="receita"?"pos":"neg"}">${p.tipo==="receita"?"+":"−"} ${brl(l.valor)}</b></div></div>`).join("")}</div>${r.length>20?`<p class="muted" style="font-size:.8rem;margin:6px 0 0">Mostrando ${p.top?"os 20 maiores":"os 20 mais recentes"}. Veja tudo no Relatório.</p>`:""}`
       :`<div class="empty">${ic("search")} Não achei lançamentos com esse filtro. Tente outro mês ou outra palavra.</div>`}</div>`;
