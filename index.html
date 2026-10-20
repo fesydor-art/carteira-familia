@@ -203,6 +203,17 @@ input[type=range]{padding:0;accent-color:var(--accent);background:none;border:0;
 .ccard .holder{font-size:.68rem;text-transform:uppercase;letter-spacing:.14em;opacity:.85}
 .ccard .nick{font-size:.78rem;opacity:.9;font-weight:500}
 .ccard .brand{font-weight:700;font-size:.82rem;text-transform:uppercase;letter-spacing:.1em;opacity:.95;font-style:italic}
+.ccard.foto{background:#0b0f19;padding:0}
+.ccard.foto::before{background:linear-gradient(160deg,rgba(255,255,255,.10),transparent 38%);z-index:1}
+.ccard.foto .shine{z-index:1}
+.ccard .cimg,.ccard canvas.cimg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.cnome{display:flex;justify-content:space-between;gap:8px;font-size:.84rem}.cnome b{font-weight:650}
+.kfoto{display:flex;flex-direction:column;gap:10px;align-items:center;flex:none}
+.kfoto .bts{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.kfoto input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+.kcrop{display:flex;align-items:center;gap:10px;width:100%;max-width:320px}
+.kcrop input[type=range]{flex:1;accent-color:var(--accent)}
+#prev.foto canvas{cursor:grab;touch-action:none}#prev.foto canvas:active{cursor:grabbing}
 .ccard.add{background:var(--surface);color:var(--muted);border:1.5px dashed var(--surface-3);box-shadow:none;align-items:center;justify-content:center;gap:8px;font-weight:600}
 .ccard.add:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .ccard.add::before{display:none}
@@ -968,7 +979,9 @@ function cardHTML(c){
   const pct = c.limite_total>0 ? Math.min(100, usado/c.limite_total*100) : 0;
   const cls = pct>=100?"over":pct>=80?"hot":"";
   return `<div class="cwrap">
-    <div class="ccard" style="--a:${esc(c.cor_a||"#334155")};--b:${esc(c.cor_b||"#0f172a")}" data-edit-card="${c.id}" role="button" tabindex="0" aria-label="Editar ${esc(c.nome)}">
+    ${c.foto?`<div class="ccard foto" data-edit-card="${c.id}" role="button" tabindex="0" aria-label="Editar ${esc(c.nome)}">
+      <img class="cimg" src="${esc(c.foto)}" alt="Foto do cartão ${esc(c.nome)}" loading="lazy"><span class="shine"></span></div>`
+    :`<div class="ccard" style="--a:${esc(c.cor_a||"#334155")};--b:${esc(c.cor_b||"#0f172a")}" data-edit-card="${c.id}" role="button" tabindex="0" aria-label="Editar ${esc(c.nome)}">
       <span class="shine"></span>
       <div class="r1"><span class="bank">${esc(c.instituicao||c.nome)}</span>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".85" aria-hidden="true"><path d="M8.5 7.5a6 6 0 0 1 0 9"/><path d="M12 5a9.5 9.5 0 0 1 0 14"/><path d="M15.5 2.5a13 13 0 0 1 0 19"/></svg></div>
@@ -976,8 +989,9 @@ function cardHTML(c){
       <div class="pan num">•••• •••• •••• ${esc(c.final4||"0000")}</div>
       <div class="r3"><div><div class="nick">${esc(c.nome)}</div><div class="holder">${esc(c.titular||"")}</div></div>
         <span class="brand">${esc(c.bandeira&&c.bandeira!=="outra"?c.bandeira:"")}</span></div>
-    </div>
+    </div>`}
     <div class="limit">
+      ${c.foto?`<div class="cnome"><b>${esc(c.nome)}</b><span class="muted">${esc(c.titular||"")}${c.final4?` · final ${esc(c.final4)}`:""}</span></div>`:""}
       <div class="bar" aria-hidden="true"><i class="${cls}" style="width:${pct.toFixed(1)}%"></i></div>
       <div class="lrow"><span class="muted">Disponível</span><strong class="num">${brl(c.disponivel)}</strong></div>
       ${(()=>{ const pf=proxFatura(c); return `<div class="lrow"><span class="muted">${pf?`Fatura · vence ${dt(pf.vence)}`:"Fatura"}</span><span class="num">${pf?brl(pf.valor):"em dia"}</span></div>`; })()}
@@ -2733,13 +2747,49 @@ function modalConta(c){
     });
 }
 
+/* enquadrar a foto do cartão: arrastar, zoom e girar; exporta 640×404 (~30 KB) */
+function fotoCartaoEditor(atual){
+  const cv=$("#k-cv"), g=cv.getContext("2d"), W=cv.width, H=cv.height, pv=$("#prev");
+  let img=null, rot=0, z=1, ox=0, oy=0, mexeu=false, removida=false;
+  const dims=()=>{ const rw=rot%180?img.height:img.width, rh=rot%180?img.width:img.height; return {rw,rh,base:Math.max(W/rw,H/rh)}; };
+  const limitar=()=>{ const {rw,rh,base}=dims(), mx=Math.max(0,(rw*base*z-W)/2), my=Math.max(0,(rh*base*z-H)/2); ox=Math.max(-mx,Math.min(mx,ox)); oy=Math.max(-my,Math.min(my,oy)); };
+  const desenhar=()=>{ if(!img) return; limitar(); const {base}=dims(); g.clearRect(0,0,W,H); g.save(); g.translate(W/2+ox,H/2+oy); g.rotate(rot*Math.PI/180); g.scale(base*z,base*z); g.drawImage(img,-img.width/2,-img.height/2); g.restore(); };
+  const modo=on=>{ pv.classList.toggle("foto",on); cv.hidden=!on; pv.querySelectorAll(".r1,.chipm,.pan,.r3").forEach(e=>e.style.visibility=on?"hidden":""); $("#k-crop").hidden=!on; $("#k-rmf").hidden=!on; $("#k-flbl").textContent=on?"Trocar foto":"Usar foto do cartão"; };
+  const carregarImg=src=>new Promise((ok,ko)=>{ const i=new Image(); i.onload=()=>{ /* reduz fotos grandes para arrastar liso */
+      const m=Math.max(i.width,i.height), k=Math.min(1,1600/m); if(k>=1) return ok(i); const t=document.createElement("canvas"); t.width=Math.round(i.width*k); t.height=Math.round(i.height*k); t.getContext("2d").drawImage(i,0,0,t.width,t.height); ok(t); };
+    i.onerror=()=>ko(new Error("Não consegui ler essa imagem.")); i.src=src; });
+  if(atual) carregarImg(atual).then(i=>{ img=i; modo(true); desenhar(); }).catch(()=>{});
+  $("#k-file").onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const u=URL.createObjectURL(f);
+    try{ img=await carregarImg(u); rot=0; z=1; ox=oy=0; mexeu=true; removida=false; $("#k-zoom").value=1; modo(true); desenhar(); $("#k-fdica").textContent="Arraste para enquadrar, use o zoom e gire se precisar."; }
+    catch(err){ toast(err.message); } finally{ URL.revokeObjectURL(u); e.target.value=""; } };
+  $("#k-zoom").oninput=e=>{ z=Number(e.target.value); mexeu=true; desenhar(); };
+  $("#k-rot").onclick=()=>{ rot=(rot+90)%360; ox=oy=0; mexeu=true; desenhar(); };
+  $("#k-rmf").onclick=()=>{ img=null; removida=true; mexeu=false; modo(false); $("#k-fdica").textContent="Sem foto: o cartão volta a usar as cores do banco."; };
+  let arr=null; const esc2=()=>W/cv.clientWidth;
+  cv.onpointerdown=e=>{ if(!img) return; arr={x:e.clientX,y:e.clientY}; cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove=e=>{ if(!arr) return; const k=esc2(); ox+=(e.clientX-arr.x)*k; oy+=(e.clientY-arr.y)*k; arr={x:e.clientX,y:e.clientY}; mexeu=true; desenhar(); };
+  cv.onpointerup=cv.onpointercancel=()=>{ arr=null; };
+  cv.onwheel=e=>{ if(!img) return; e.preventDefault(); z=Math.max(1,Math.min(3,z*(e.deltaY<0?1.06:1/1.06))); $("#k-zoom").value=z; mexeu=true; desenhar(); };
+  return { valor(){ if(removida) return null; if(!img||!mexeu) return undefined; desenhar();
+    for(const q of [.82,.7,.55]){ let d=cv.toDataURL("image/webp",q); if(!d.startsWith("data:image/webp")) d=cv.toDataURL("image/jpeg",q); if(d.length<300000) return d; }
+    return cv.toDataURL("image/jpeg",.45); } };
+}
 function modalCartao(c){
   const ed=!!c; c=c||{titular_id:S.user.id,bandeira:"mastercard",limite_total:0,fatura_atual:0};
   abrir(`<h2>${ed?"Editar cartão":"Novo cartão"}</h2>
-    <div class="ccard" id="prev" style="--a:#334155;--b:#0f172a;max-width:320px;align-self:center;width:100%">
+    <div class="ccard" id="prev" style="--a:#334155;--b:#0f172a;max-width:320px;align-self:center;width:100%;flex:none">
+      <canvas class="cimg" id="k-cv" width="640" height="404" hidden aria-label="Foto do cartão: arraste para enquadrar"></canvas>
       <div class="r1"><span class="bank" id="p-bank">Banco</span></div><div class="chipm"></div>
       <div class="pan num" id="p-pan">•••• •••• •••• 0000</div>
       <div class="r3"><div><div class="nick" id="p-nick"></div><div class="holder" id="p-hold"></div></div><span class="brand" id="p-brand"></span></div>
+    </div>
+    <div class="kfoto">
+      <div class="kcrop" id="k-crop" hidden>${ic("zoom-out","ico",15)}<input type="range" id="k-zoom" min="1" max="3" step="0.01" value="1" aria-label="Zoom da foto">${ic("zoom-in","ico",15)}
+        <button type="button" class="iconbtn sm" id="k-rot" title="Girar 90°" aria-label="Girar foto">${ic("rotate-cw","ico",15)}</button></div>
+      <div class="bts"><label class="btn ghost sm" for="k-file" style="cursor:pointer">${ic("camera","ico",14)} <span id="k-flbl">${c.foto?"Trocar foto":"Usar foto do cartão"}</span></label>
+        <input id="k-file" type="file" accept="image/*" aria-label="Escolher foto do cartão">
+        <button type="button" class="btn ghost sm" id="k-rmf" ${c.foto?"":"hidden"}>${ic("image-off","ico",14)} Remover foto</button></div>
+      <span class="muted" id="k-fdica" style="font-size:.76rem;text-align:center;max-width:340px">${c.foto?"Arraste a foto para enquadrar.":"Tire uma foto da frente do cartão. Se o número completo aparecer, cubra com o dedo. A foto só aparece para a família."}</span>
     </div>
     <form id="fk" style="display:flex;flex-direction:column;gap:12px">
       <div class="grid2">
@@ -2771,6 +2821,7 @@ function modalCartao(c){
         $("#p-nick").textContent=$("#k-nome").value; $("#p-hold").textContent=nomeMembro($("#k-tit").value);
         const b=$("#k-band").value; $("#p-brand").textContent=b==="outra"?"":b;};
       ["k-inst","k-f4","k-nome","k-tit","k-band"].forEach(id=>$("#"+id).addEventListener("input",upd)); upd();
+      const fc=fotoCartaoEditor(c.foto); /* foto real do cartão */
       if(ed) $("#k-arq").onclick=async()=>{await sb.from("cartoes").update({ativo:false}).eq("id",c.id); fechar(); await carregar(); render(); toast("Cartão arquivado");};
       $("#fk").onsubmit=async e=>{e.preventDefault();
         const n=v=>v===""?null:Number(v);
@@ -2778,8 +2829,10 @@ function modalCartao(c){
           final4:$("#k-f4").value||null,titular_id:$("#k-tit").value,limite_total:Number($("#k-lim").value||0),
           fatura_atual:Number($("#k-fat").value||0),dia_fechamento:n($("#k-fec").value),dia_vencimento:n($("#k-ven").value)};
         if(S.grupoOK) row.grupo_id=$("#k-grp").value||null;
+        const fv=fc.valor(); if(fv!==undefined) row.foto=fv;
         if(ed && S.grupoOK && row.grupo_id!==c.grupo_id){ const rl=await sb.from("lancamentos").update({grupo_id:row.grupo_id}).eq("cartao_id",c.id); if(rl.error) return $("#k-err").textContent=rl.error.message; }
-        const r= ed? await sb.from("cartoes").update(row).eq("id",c.id) : await sb.from("cartoes").insert(row);
+        let r= ed? await sb.from("cartoes").update(row).eq("id",c.id) : await sb.from("cartoes").insert(row);
+        if(r.error&&"foto" in row&&/foto/.test(r.error.message)){ delete row.foto; r= ed? await sb.from("cartoes").update(row).eq("id",c.id) : await sb.from("cartoes").insert(row); if(!r.error) toast("A foto não foi salva: falta aplicar o SQL da foto do cartão"); }
         if(r.error) return $("#k-err").textContent=r.error.message;
         fechar(); await carregar(); render(); toast(ed?"Cartão atualizado":"Cartão adicionado");};
     });
