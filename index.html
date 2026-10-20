@@ -503,6 +503,18 @@ details.rel-todos>summary{cursor:pointer}
 .as-ex{flex-wrap:wrap}.as-ex .chip{font-size:.78rem}
 .as-frase{font-size:1.05rem;line-height:1.5;margin:4px 0 8px}
 .as-cats{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+
+.lanc2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:980px){.lanc2{grid-template-columns:1fr}}
+.lcol{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.lcol.receita{border-top:3px solid var(--pos)}.lcol.despesa{border-top:3px solid var(--neg)}
+.lcol-h{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.lcol-t{display:flex;align-items:center;gap:6px;font-weight:650}
+.lcol.receita .lcol-t .ico{color:var(--pos)}.lcol.despesa .lcol-t .ico{color:var(--neg)}
+.lcol-t .cnt{display:inline-grid;place-items:center;min-width:22px;height:20px;padding:0 6px;border-radius:99px;background:var(--surface-2);font-size:.72rem;color:var(--muted)}
+.lcol-h b{font-size:1.02rem}.lcol-h b.pos{color:var(--pos)}.lcol-h b.neg{color:var(--neg)}
+.lcol-s{font-size:.74rem}
+.item.interno{opacity:.6}
 </style>
 </head>
 <body>
@@ -981,23 +993,28 @@ function secCartoes(cartoes){
     </div></section>`;
 }
 function secLanc(n){
-  const r=mesRef();
-  let l = filtro(S.lanc,"user_id").filter(x=>x.data>=r.ini&&x.data<=r.fim);
-  const tRec=l.filter(x=>x.tipo==="receita"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0), tDes=l.filter(x=>x.tipo==="despesa"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0);
-  const total=l.length; l = l.slice(0,n);
+  const r=mesRef(), l=filtro(S.lanc,"user_id").filter(x=>x.data>=r.ini&&x.data<=r.fim);
   const nomeOrig = x => x.conta_id ? (S.contas.find(c=>c.id===x.conta_id)||{}).nome : (S.cartoes.find(c=>c.id===x.cartao_id)||{}).nome;
+  const item=x=>{ const cat=S.cats.find(c=>c.id===x.categoria_id), g=S.grupos.find(c=>c.id===x.grupo_id), int=ehInterno(x);
+    return `<div class="item${int?" interno":""}">
+        <button class="dot dot-btn${!cat&&!int?" sem":""}" data-cat-l="${x.id}" title="${cat?"Categoria: "+esc(cat.nome)+" (trocar)":"Sem categoria: toque para escolher"}" aria-label="Categoria" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</button>
+        <div><div class="t">${esc(x.descricao)}</div><div class="m">${cat?`<b class="catn">${esc(cat.nome)}</b> · `:(!int?`<button class="link" style="font-size:.76rem" data-cat-l="${x.id}">+ categoria</button> · `:"")}${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
+        <div class="r"><div class="amt ${int?"":x.tipo==="receita"?"pos":"neg"}">${x.tipo==="receita"?"+":"−"} ${brl(x.valor)}</div>
+          <div class="acts">${int?`<span class="pill" title="Movimentação entre suas contas: não conta como gasto nem renda">interno</span>`:""}${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
+      </div>`; };
+  const col=(tipo,tit,icone)=>{ const todos=l.filter(x=>x.tipo===tipo), validos=todos.filter(x=>!ehInterno(x)), tot=validos.reduce((s,x)=>s+Number(x.valor),0);
+    const mostrar=todos.slice(0,n), resto=todos.length-mostrar.length, ninterno=todos.length-validos.length;
+    return `<div class="lcol ${tipo}">
+      <div class="lcol-h"><span class="lcol-t">${ic(icone,"ico",16)} ${tit} <span class="cnt">${validos.length}</span></span><b class="num ${tipo==="receita"?"pos":"neg"}">${tipo==="receita"?"+":"−"} ${brl(tot)}</b></div>
+      ${ninterno?`<span class="muted lcol-s">${ninterno} ${ninterno===1?"movimentação interna":"movimentações internas"} (Pix entre contas, fatura, aplicação) não ${ninterno===1?"entra":"entram"} no total</span>`:""}
+      <div class="list">${mostrar.length?mostrar.map(item).join(""):`<div class="empty">${ic(icone)} Nenhuma ${tipo==="receita"?"entrada":"saída"} em ${r.nome}.</div>`}</div>
+      ${resto>0?`<button class="link" data-tab="lanc" style="align-self:flex-start">+ ${resto} ${tipo==="receita"?"entradas":"saídas"} · ver todas</button>`:""}
+    </div>`; };
+  const E=l.filter(x=>x.tipo==="receita"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0), D=l.filter(x=>x.tipo==="despesa"&&!ehInterno(x)).reduce((s,x)=>s+Number(x.valor),0);
   return `<section class="panel">
-    <div class="sec-h"><h2>Lançamentos de ${r.nome}</h2>${n<=10?`<button class="btn ghost sm" data-tab="lanc">Ver todos ${ic("chevron-right","ico",14)}</button>`:""}</div>
-    <div class="lrow"><span class="muted">${total} ${total===1?"lançamento":"lançamentos"}</span><span class="num"><span style="color:var(--pos);font-weight:600">+${brl(tRec)}</span> <span class="muted">·</span> <span style="color:var(--neg);font-weight:600">−${brl(tDes)}</span></span></div>
-    <div class="list">${l.length? l.map(x=>{
-      const cat=S.cats.find(c=>c.id===x.categoria_id), g=S.grupos.find(c=>c.id===x.grupo_id);
-      return `<div class="item">
-        <button class="dot dot-btn${!cat&&!ehInterno(x)?" sem":""}" data-cat-l="${x.id}" title="${cat?"Categoria: "+esc(cat.nome)+" (trocar)":"Sem categoria: toque para escolher"}" aria-label="Categoria" style="${x.tipo==="receita"?"background:var(--pos-soft);color:var(--pos)":""}">${ic(cat?.icone||"tag")}</button>
-        <div><div class="t">${esc(x.descricao)}</div><div class="m">${cat?`<b class="catn">${esc(cat.nome)}</b> · `:(!ehInterno(x)&&x.tipo==="despesa"?`<button class="link" style="font-size:.76rem" data-cat-l="${x.id}">+ categoria</button> · `:"")}${dt(x.data)} · ${esc(nomeOrig(x)||"—")} · ${esc(nomeMembro(x.user_id))}${g?` · ${esc(g.nome)}`:""}</div></div>
-        <div class="r"><div class="amt ${x.tipo==="receita"?"pos":"neg"}">${x.tipo==="receita"?"+":"−"} ${brl(x.valor)}</div>
-          <div class="acts">${ehInterno(x)?`<span class="pill" title="Movimentação entre suas contas: não conta como gasto nem renda">interno</span>`:""}${parcTxt(x)?`<span class="pill">${parcTxt(x)}</span>`:""}${x.origem==="manual"?`<button class="iconbtn sm danger" data-del="lanc" data-id="${x.id}" aria-label="Excluir lançamento" title="Excluir lançamento">${ic("trash-2","ico",14)}</button>${x.compra_id?`<button class="iconbtn sm danger" data-del="compra" data-id="${x.id}" aria-label="Excluir compra inteira" title="Excluir todas as parcelas">${ic("layers","ico",14)}</button>`:""}`:`<span class="pill auto">auto</span>`}</div></div>
-      </div>`}).join("") : `<div class="empty">${ic("receipt-text")} Sem lançamentos em ${r.nome}. Use “Novo lançamento” para registrar uma entrada ou saída.</div>`}
-    </div></section>`;
+    <div class="sec-h"><div><h2>Lançamentos de ${r.nome}</h2><span class="meta">${l.length} ${l.length===1?"lançamento":"lançamentos"} · entradas − saídas = <b style="color:${E-D<0?"var(--neg)":"var(--pos)"}">${brl(E-D)}</b></span></div>${n<=10?`<button class="btn ghost sm" data-tab="lanc">Ver todos ${ic("chevron-right","ico",14)}</button>`:""}</div>
+    <div class="lanc2">${col("receita","Entradas","arrow-down-left")}${col("despesa","Saídas","arrow-up-right")}</div>
+  </section>`;
 }
 function secAjustes(){
   return `<section class="panel" style="max-width:520px">
