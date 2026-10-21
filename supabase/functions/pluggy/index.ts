@@ -131,6 +131,9 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
         dia_fechamento: dia(cd.balanceCloseDate), dia_vencimento: dia(cd.balanceDueDate),
         origem: "pluggy", pluggy_account_id: a.id, ativo: true, atualizado_em: new Date().toISOString(),
       };
+      // alguns bancos (ex.: Nubank) não mandam as datas: não apaga o dia que o usuário digitou
+      if (row.dia_fechamento == null) delete row.dia_fechamento;
+      if (row.dia_vencimento == null) delete row.dia_vencimento;
       const ex = await sb.from("cartoes").select("id,grupo_id").eq("pluggy_account_id", a.id).maybeSingle();
       if (!ex.data) row.grupo_id = casal; else grpConta = ex.data.grupo_id;
       const r = await sb.from("cartoes").upsert(row, { onConflict: "pluggy_account_id" }).select("id").single();

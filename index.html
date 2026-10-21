@@ -1159,7 +1159,7 @@ function mesFaturaAtual(c,hd){ const dv=Number(c.dia_vencimento)||0; return (!dv
 function mesPagamento(c,dataIso,hoje){
   const d=new Date(dataIso+"T12:00:00"), fech=diaFech(c), dv=Number(c.dia_vencimento)||0;
   let off=(d.getFullYear()-hoje.getFullYear())*12+(d.getMonth()-hoje.getMonth());
-  if(fech && d.getDate()>fech) off+=1;          // depois do fechamento -> próxima fatura
+  if(fech && d.getDate()>=fech) off+=1;         // no dia do fechamento ou depois -> próxima fatura
   if(!fech || (dv && dv<=fech)) off+=1;          // vencimento cai no mês seguinte ao fechamento
   return off;
 }
@@ -1169,7 +1169,7 @@ function fracaoAteFechar(c,hoje){
   return Math.min(1,Math.max(0,(alvo-hoje)/864e5/30));
 }
 /* faturas previstas por cartão e mês: {cartaoId:{m:{valor, atual, estimado, parcelas}}} */
-/* ciclo da fatura que vence no mês m (0 = este): compras em (ini, fim], vence em "vence" */
+/* ciclo da fatura que vence no mês m (0 = este): compras em [ini, fim), vence em "vence" */
 function dataDia(y,mo,d){ const last=new Date(y,mo+1,0).getDate(); return new Date(y,mo,Math.min(d,last),12); }
 function cicloFatura(c,m){
   const venc=Number(c.dia_vencimento)||0; if(!venc) return null;
@@ -1190,7 +1190,7 @@ function faturasPrevistas(nMeses,aj=1){
       const inf=Math.pow(1+Number(p.inflacao)/100,m/12), cy=cicloFatura(c,m);
       if(banco){
         if(cy.vence<hj) continue;                                  // já venceu
-        const itens=tx.filter(l=>l.data>cy.ini&&l.data<=cy.fim);
+        const itens=tx.filter(l=>l.data>=cy.ini&&l.data<cy.fim);   // compra no dia do fechamento já vai para a próxima fatura
         const soma=a=>a.reduce((s,l)=>s+Number(l.valor),0);
         const compras=soma(itens.filter(l=>l.tipo==="despesa"&&!ehParcela(l))), parcelas=soma(itens.filter(l=>l.tipo==="despesa"&&ehParcela(l)));
         const creditos=soma(itens.filter(l=>l.tipo==="receita"&&!ehPagCartao(l)));
@@ -1379,7 +1379,7 @@ function secFaturas(){
     if(!f.paga) total+=f.valor;
     const btn=`<button class="btn ${f.paga?"ghost":""} sm" data-rec-pago="fat:${c.id}" data-rmes="${mesKeyOff(o)}" data-v="${f.paga?0:1}">${ic(f.paga?"rotate-ccw":"circle-check","ico",14)} ${f.paga?"Desmarcar":"Marcar como paga"}</button>`;
     const pill=f.paga?`<span class="pill" style="background:var(--pos-soft);color:var(--pos)">${f.autoPaga&&marca("fat:"+c.id,mesKeyOff(o))===null?"paga no banco":"paga"}</span>`:`<span class="pill ${f.aberta?"auto":""}">${f.aberta?"aberta":"fechada"}</span>`;
-    const nota=cy?`${banco?`Compras de ${dt(iso(new Date(new Date(cy.ini+"T12:00:00").getTime()+864e5)))} a ${dt(cy.fim)} · `:""}${f.aberta?"fecha":"fechou"} ${dt(cy.fim)} · vence ${dt(cy.vence)}`:"";
+    const nota=cy?`${banco?`Compras de ${dt(cy.ini)} a ${dt(iso(new Date(new Date(cy.fim+"T12:00:00").getTime()-864e5)))} · `:""}${f.aberta?"fecha":"fechou"} ${dt(cy.fim)} · vence ${dt(cy.vence)}`:"";
     const compras=f.itens.filter(l=>!ehParcela(l)&&!ehPagCartao(l)), parcs=f.itens.filter(l=>ehParcela(l));
     const box=(rot,v,cls)=>`<div><span class="label">${rot}</span><b class="num ${cls||""}">${brl(v)}</b></div>`;
     return `<div class="fat">
