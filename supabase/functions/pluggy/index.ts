@@ -84,7 +84,7 @@ const CAT: [RegExp, string][] = [
   [/shopping|clothing|electronics|compras/i, "Compras"],
 ];
 
-async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
+async function syncItem(sb: any, fid: string, uid: string, itemId: string, grpNovo: string | null = null) {
   const it = await pg(`/items/${itemId}`);
   const contas = await todas(`/accounts?itemId=${itemId}`);
   let banco: string = it.connector?.name || "Banco";
@@ -104,7 +104,8 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
     inst = r.data;
   }
   const { data: gr } = await sb.from("grupos").select("id,nome").eq("familia_id", fid);
-  const casal = (gr || []).find((g: any) => /casal/i.test(g.nome))?.id || null;
+  // perfil das contas novas: o escolhido ao conectar (ex.: "Pai") ou "Casal"
+  const casal = (grpNovo && (gr || []).some((g: any) => g.id === grpNovo)) ? grpNovo : ((gr || []).find((g: any) => /casal/i.test(g.nome))?.id || null);
   const { data: cats } = await sb.from("categorias").select("id,nome").eq("familia_id", fid);
   const catId = (pc?: string) => {
     if (!pc) return null;
@@ -190,7 +191,7 @@ async function syncItem(sb: any, fid: string, uid: string, itemId: string) {
         pluggy_account_id: "inv:" + v.id, ativo: Number(v.balance ?? v.amount ?? 0) > 0, atualizado_em: new Date().toISOString(),
       };
       const ex = await sb.from("contas").select("id").eq("pluggy_account_id", row.pluggy_account_id).maybeSingle();
-      if (!ex.data) row.grupo_id = grpBanco || (gr || []).find((g: any) => /invest/i.test(g.nome))?.id || casal;
+      if (!ex.data) row.grupo_id = grpBanco || (grpNovo ? casal : null) || (gr || []).find((g: any) => /invest/i.test(g.nome))?.id || casal;
       const r = await sb.from("contas").upsert(row, { onConflict: "pluggy_account_id" });
       if (!r.error) nInv++;
     }
@@ -275,7 +276,7 @@ Deno.serve(async (req) => {
         familia_id: fid, user_id: user.id, banco: it.connector?.name || "Banco", pluggy_item_id: it.id, status: it.status || "ativo",
       }, { onConflict: "pluggy_item_id" });
       if (up.error) throw new Error(up.error.message);
-      return json({ resultados: [await syncItem(sb, fid, user.id, it.id)] });
+      return json({ resultados: [await syncItem(sb, fid, user.id, it.id, typeof body.grupo_id === "string" ? body.grupo_id : null)] });
     }
     if (body.acao === "sync") {
       // cada pessoa sincroniza só as próprias conexões (respeita perfis privados)

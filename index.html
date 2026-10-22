@@ -1593,13 +1593,25 @@ function carregarScriptPluggy(){
     document.head.appendChild(s); });
 }
 const resumoSync = res => (res||[]).map(r=>r.erro?`${r.banco}: ${r.erro}`:`${r.banco}: ${r.contas} contas, ${r.cartoes} cartões${r.emprestimos?`, ${r.emprestimos} empréstimos`:""}, ${r.transacoes} transações`).join(" · ");
-async function conectarBanco(){
+/* antes de conectar: de quem é o banco? (as contas novas entram nesse perfil, ex.: "Pai") */
+function conectarBanco(){
+  if(!(S.grupos||[]).length) return conectarBancoNo(null);
+  const casal=(S.grupos.find(g=>/casal/i.test(g.nome))||S.grupos[0]).id;
+  abrir(`<h2>De quem é este banco?</h2>
+    <p class="muted" style="margin:0">As contas, cartões e lançamentos dele entram no perfil escolhido. Dá para mudar depois em cada conta.</p>
+    <div class="list" id="cb-perfis">${S.grupos.map(g=>`<label class="item" style="cursor:pointer"><input type="radio" name="cb-g" value="${g.id}" ${g.id===casal?"checked":""} style="width:auto;accent-color:var(--accent)">
+      <div><div class="t"><span style="color:${esc(g.cor||"currentColor")};display:inline-flex;vertical-align:-3px">${ic(g.icone,"ico",16)}</span> ${esc(g.nome)}</div><div class="m">${g.privado?"privado · só você vê, fora de Todos":separado(g)?"separado · fora do saldo de cada pessoa":"entra no saldo da família"}</div></div></label>`).join("")}</div>
+    <div class="row-end"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="cb-ok">${ic("link-2","ico",15)} Conectar</button></div>`, ()=>{
+    $("#cb-ok").onclick=()=>{ const g=(document.querySelector('input[name="cb-g"]:checked')||{}).value||null; fechar(); conectarBancoNo(g); };
+  });
+}
+async function conectarBancoNo(grupo){
   const err=$("#pl-err"); if(err) err.textContent="";
   try{
     const [t]=await Promise.all([chamarPluggy({acao:"token"}),carregarScriptPluggy()]);
     const pc=new window.PluggyConnect({ connectToken:t.token, includeSandbox:false,
       onSuccess: async (data)=>{ const id=data?.item?.id||data?.itemId||data?.id; toast("Banco conectado. Importando dados…");
-        try{ const r=await chamarPluggy({acao:"salvar_item",itemId:id}); await carregar(); render(); toast(resumoSync(r.resultados)); }
+        try{ const r=await chamarPluggy({acao:"salvar_item",itemId:id,grupo_id:grupo}); await carregar(); render(); toast(resumoSync(r.resultados)); }
         catch(e){ const er=$("#pl-err"); if(er) er.textContent=e.message; } },
       onError: (e)=>{ const er=$("#pl-err"); if(er) er.textContent="Pluggy: "+(e?.message||"erro na conexão"); } });
     await pc.init();
